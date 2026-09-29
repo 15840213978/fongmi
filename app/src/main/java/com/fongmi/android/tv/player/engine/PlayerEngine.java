@@ -3,6 +3,7 @@ package com.fongmi.android.tv.player.engine;
 import androidx.media3.common.C;
 import androidx.media3.common.PlaybackException;
 import androidx.media3.common.Player;
+import androidx.media3.ui.PlayerView;
 
 import com.fongmi.android.tv.bean.Sub;
 import com.fongmi.android.tv.player.effect.PlayerEffect;
@@ -22,6 +23,29 @@ public interface PlayerEngine {
     void release();
 
     void setDecode(int decode);
+
+    default void bindPlayerView(PlayerView view) {
+    }
+
+    default boolean isIsoNavigationPlayback() {
+        return false;
+    }
+
+    default boolean hasDiscMenu() {
+        return false;
+    }
+
+    default boolean isDiscMenuActive() {
+        return false;
+    }
+
+    default boolean sendDiscMenuAction(String action) {
+        return false;
+    }
+
+    default boolean sendDiscMenuPointer(float x, float y, boolean activate) {
+        return false;
+    }
 
     default PlayerEffect getEffect() {
         return PlayerEffect.NONE;

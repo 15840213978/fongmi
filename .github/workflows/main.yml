@@ -145,7 +145,7 @@ jobs:
       - name: Grant execute permission
         run: chmod +x gradlew media3/gradlew media3-ass/gradlew
 
-      - name: Restore ASS callbacks and ISO 9660 disc reading in Media3
+      - name: Restore ASS, ISO and EXO disc navigation in Media3
         run: |
           set -euo pipefail
           git -C media3 apply "$GITHUB_WORKSPACE/patches/media3-ass-matroska.patch"
@@ -153,6 +153,7 @@ jobs:
           git -C media3 apply "$GITHUB_WORKSPACE/patches/media3-iso9660-fallback.patch"
           git -C media3 apply "$GITHUB_WORKSPACE/patches/media3-mpv-disc-navigation-test.patch"
           python3 scripts/restore_official_java_bridges.py --media3-root media3
+          python3 scripts/restore_exo_disc_navigation.py --media3-root media3
           git -C media3 diff --check
 
       - name: Download verified official 5.6.7 APKs
@@ -386,6 +387,8 @@ jobs:
                   for bridge in (
                       b"androidx/media3/extractor/iso/udf/NativeUdfFileSystem",
                       b"androidx/media3/exoplayer/iso/IsoNavigationSession",
+                      b"androidx/media3/exoplayer/source/DiscNavigationSource",
+                      b"androidx/media3/exoplayer/source/iso/IsoNavigationDataSource",
                       b"androidx/media3/decoder/ffmpeg/FfmpegDolbyVisionP5Native",
                   ):
                       if bridge not in dex_blob:
@@ -426,7 +429,7 @@ jobs:
           cat >> release-notes.md <<'EOF'
 
           此自动构建使用已验证的官方 5.6.7 原生组件链：FFmpeg、MPV discnav、ISO/UDF JNI、Dolby Vision P5 JNI、CMG/effect 与 BD-J 资源均在 CI 中恢复并校验。
-          该主分支构建保持稳定 5.6.7 基线；EXO 导航状态机的实验性接管改动不包含在本次自动构建中。
+          本构建已启用 EXO 光盘导航接管：DVD/BD ISO 优先通过 IsoNavigationSession + nativeRead 导航流播放，菜单方向/确认/菜单/弹出/返回及触控指针统一进入同一导航 session；不支持的镜像继续回退静态 ISO 解析。CI 已校验 EXO 导航类进入最终 DEX。复杂菜单的 segment/discontinuity 切换、BD-J 交互与真实 Dolby Vision 输出仍需 ARM 真机和真实光盘镜像验证。
           EOF
 
           if gh release view "$TAG" >/dev/null 2>&1; then

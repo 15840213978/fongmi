@@ -17,6 +17,7 @@ import androidx.media3.common.Player;
 import androidx.media3.common.Tracks;
 import androidx.media3.common.VideoSize;
 import androidx.media3.ui.danmaku.DanmakuConfig;
+import androidx.media3.ui.PlayerView;
 
 import com.fongmi.android.tv.App;
 import com.fongmi.android.tv.Constant;
@@ -31,6 +32,7 @@ import com.fongmi.android.tv.player.effect.audio.AudioEffectBands;
 import com.fongmi.android.tv.player.engine.PlayerEngine;
 import com.fongmi.android.tv.player.engine.PlayerEngineFactory;
 import com.fongmi.android.tv.player.media.PlaySpec;
+import com.fongmi.android.tv.player.mpv.MpvPlayerEngine;
 import com.fongmi.android.tv.player.mpv.MpvScriptSession;
 import com.fongmi.android.tv.player.mpv.MpvScripts;
 import com.fongmi.android.tv.player.parse.ParseJob;
@@ -93,6 +95,30 @@ public class PlayerManager implements ParseCallback {
 
     public Player getPlayer() {
         return player;
+    }
+
+    public boolean isIsoNavigationPlayback() {
+        return engine != null && engine.isIsoNavigationPlayback();
+    }
+
+    public boolean hasDiscMenu() {
+        return engine != null && engine.hasDiscMenu();
+    }
+
+    public boolean isDiscMenuActive() {
+        return engine != null && engine.isDiscMenuActive();
+    }
+
+    public boolean sendDiscMenuAction(String action) {
+        return engine != null && engine.sendDiscMenuAction(action);
+    }
+
+    public boolean sendDiscMenuPointer(float x, float y, boolean activate) {
+        return engine != null && engine.sendDiscMenuPointer(x, y, activate);
+    }
+
+    public void bindPlayerView(@Nullable PlayerView view) {
+        if (engine != null) engine.bindPlayerView(view);
     }
 
     // Public Media3 has no MPV script bridge. Keep the settings readable until

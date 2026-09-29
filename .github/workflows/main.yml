@@ -1,5 +1,6 @@
 name: Build APK
 # Player dependencies are pinned below for reproducible four-APK builds.
+# FongMi 5.6.8 EXO navigation build: restore native chain and verify navigation state.
 
 on:
   push:
@@ -156,22 +157,22 @@ jobs:
           python3 scripts/restore_exo_disc_navigation.py --media3-root media3
           git -C media3 diff --check
 
-      - name: Download verified official 5.6.7 APKs
+      - name: Download verified official 5.6.8 APKs
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/fongmi-official-567"
           curl --fail --location --retry 3 --retry-all-errors \
             --connect-timeout 20 --max-time 600 \
-            "https://github.com/FongMi/Release/releases/download/5.6.7/mobile-arm64_v8a.apk" \
+            "https://github.com/FongMi/Release/releases/download/5.6.8/mobile-arm64_v8a.apk" \
             --output "$RUNNER_TEMP/fongmi-official-567/mobile-arm64_v8a.apk"
           curl --fail --location --retry 3 --retry-all-errors \
             --connect-timeout 20 --max-time 600 \
-            "https://github.com/FongMi/Release/releases/download/5.6.7/mobile-armeabi_v7a.apk" \
+            "https://github.com/FongMi/Release/releases/download/5.6.8/mobile-armeabi_v7a.apk" \
             --output "$RUNNER_TEMP/fongmi-official-567/mobile-armeabi_v7a.apk"
           echo "5428c11d5aa09813dfa2fde8a32be2beeeddfc45d093b89e46ed53cd696a3b3c  $RUNNER_TEMP/fongmi-official-567/mobile-arm64_v8a.apk" | sha256sum --check
           echo "492bc0b1d4607a41d3c3f56d37bc590be0ee6b8b481bebe52f6dd2b0819d2385  $RUNNER_TEMP/fongmi-official-567/mobile-armeabi_v7a.apk" | sha256sum --check
 
-      - name: Stage official 5.6.7 native payloads
+      - name: Stage official 5.6.8 native payloads
         run: |
           set -euo pipefail
           python3 scripts/stage_official_native_test.py \
@@ -181,7 +182,7 @@ jobs:
             --report official-native-stage.json
           cat official-native-stage.json
 
-      - name: Restore official 5.6.7 FFmpeg family
+      - name: Restore official 5.6.8 FFmpeg family
         run: |
           set -euo pipefail
           python3 scripts/restore_official_567_ffmpeg.py \
@@ -189,7 +190,7 @@ jobs:
             --armeabi "$RUNNER_TEMP/fongmi-official-567/mobile-armeabi_v7a.apk" \
             --media3-root media3
 
-      - name: Restore official 5.6.7 MPV disc menu binaries
+      - name: Restore official 5.6.8 MPV disc menu binaries
         run: |
           set -euo pipefail
           python3 scripts/recover_official_mpv.py \
@@ -197,7 +198,7 @@ jobs:
             --armeabi "$RUNNER_TEMP/fongmi-official-567/mobile-armeabi_v7a.apk" \
             --media3-root media3
 
-      - name: Verify official 5.6.7 Dolby Vision JNI against FFmpeg
+      - name: Verify official 5.6.8 Dolby Vision JNI against FFmpeg
         run: |
           set -euo pipefail
           python3 scripts/verify_official_dovi_linkage.py \
@@ -399,7 +400,7 @@ jobs:
       - name: Upload four APKs to Actions
         uses: actions/upload-artifact@v4
         with:
-          name: TV-5.6.7-four-apks
+          name: TV-5.6.8-four-apks
           path: dist/*.apk
           if-no-files-found: error
           retention-days: 30
@@ -412,11 +413,11 @@ jobs:
           set -euo pipefail
 
           TAG="auto-${{ github.run_number }}"
-          TITLE="TV 5.6.7 自动构建"
+          TITLE="TV 5.6.8 自动构建"
           RELEASE_FLAGS=(--latest)
 
           cat > release-notes.md <<EOF
-          TV 5.6.7 自动构建
+          TV 5.6.8 自动构建
 
           Commit: ${{ github.sha }}
 
@@ -428,7 +429,7 @@ jobs:
 
           cat >> release-notes.md <<'EOF'
 
-          此自动构建使用已验证的官方 5.6.7 原生组件链：FFmpeg、MPV discnav、ISO/UDF JNI、Dolby Vision P5 JNI、CMG/effect 与 BD-J 资源均在 CI 中恢复并校验。
+          此自动构建使用已验证的官方 5.6.8 原生组件链：FFmpeg、MPV discnav、ISO/UDF JNI、Dolby Vision P5 JNI、CMG/effect 与 BD-J 资源均在 CI 中恢复并校验。
           本构建已启用 EXO 光盘导航接管：DVD/BD ISO 优先通过 IsoNavigationSession + nativeRead 导航流播放，菜单方向/确认/菜单/弹出/返回及触控指针统一进入同一导航 session；不支持的镜像继续回退静态 ISO 解析。CI 已校验 EXO 导航类进入最终 DEX。复杂菜单的 segment/discontinuity 切换、BD-J 交互与真实 Dolby Vision 输出仍需 ARM 真机和真实光盘镜像验证。
           EOF
 

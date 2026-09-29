@@ -3,11 +3,12 @@ name: Build APK
 
 on:
   push:
-    branches: [ fongmi, 'codex/media3-public-compat-*' ]
+    branches: [ fongmi ]
   workflow_dispatch:
 
 permissions:
   contents: write
+  actions: read
 
 concurrency:
   group: build-apk-${{ github.ref }}
@@ -16,6 +17,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-22.04
+    timeout-minutes: 120
 
     steps:
       - name: Checkout source code
@@ -31,18 +33,26 @@ jobs:
           path: media3
           fetch-depth: 1
 
+      - name: Checkout original FongMi libass source and its native submodules
+        uses: actions/checkout@v4
+        with:
+          repository: FongMi/media
+          ref: 9dae39e9689ee305c83f94bd11cf3bcecb9d6171
+          path: media3-ass
+          fetch-depth: 1
+          submodules: recursive
+
       - name: Set up JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: '21'
           distribution: 'temurin'
-          cache: gradle
 
       - name: Install Python 3.10
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y python3.10 python3.10-dev python3.10-venv
+          sudo apt-get install -y python3.10 python3.10-dev python3.10-venv autoconf automake autopoint gettext gperf libtool ninja-build pkg-config
           python3.10 --version
 
       - name: Ensure Android SDK 37
@@ -133,7 +143,65 @@ jobs:
           echo "Release signing configured."
 
       - name: Grant execute permission
-        run: chmod +x gradlew media3/gradlew
+        run: chmod +x gradlew media3/gradlew media3-ass/gradlew
+
+      - name: Restore ASS callbacks and ISO 9660 disc reading in Media3
+        run: |
+          set -euo pipefail
+          git -C media3 apply "$GITHUB_WORKSPACE/patches/media3-ass-matroska.patch"
+          git -C media3 apply "$GITHUB_WORKSPACE/patches/media3-ass-matroska-test.patch"
+          git -C media3 apply "$GITHUB_WORKSPACE/patches/media3-iso9660-fallback.patch"
+          git -C media3 apply "$GITHUB_WORKSPACE/patches/media3-mpv-disc-navigation-test.patch"
+          python3 scripts/restore_official_java_bridges.py --media3-root media3
+          git -C media3 diff --check
+
+      - name: Download verified official 5.6.7 APKs
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/fongmi-official-567"
+          curl --fail --location --retry 3 --retry-all-errors \
+            --connect-timeout 20 --max-time 600 \
+            "https://github.com/FongMi/Release/releases/download/5.6.7/mobile-arm64_v8a.apk" \
+            --output "$RUNNER_TEMP/fongmi-official-567/mobile-arm64_v8a.apk"
+          curl --fail --location --retry 3 --retry-all-errors \
+            --connect-timeout 20 --max-time 600 \
+            "https://github.com/FongMi/Release/releases/download/5.6.7/mobile-armeabi_v7a.apk" \
+            --output "$RUNNER_TEMP/fongmi-official-567/mobile-armeabi_v7a.apk"
+          echo "5428c11d5aa09813dfa2fde8a32be2beeeddfc45d093b89e46ed53cd696a3b3c  $RUNNER_TEMP/fongmi-official-567/mobile-arm64_v8a.apk" | sha256sum --check
+          echo "492bc0b1d4607a41d3c3f56d37bc590be0ee6b8b481bebe52f6dd2b0819d2385  $RUNNER_TEMP/fongmi-official-567/mobile-armeabi_v7a.apk" | sha256sum --check
+
+      - name: Stage official 5.6.7 native payloads
+        run: |
+          set -euo pipefail
+          python3 scripts/stage_official_native_test.py \
+            --arm64 "$RUNNER_TEMP/fongmi-official-567/mobile-arm64_v8a.apk" \
+            --armeabi "$RUNNER_TEMP/fongmi-official-567/mobile-armeabi_v7a.apk" \
+            --app-root app \
+            --report official-native-stage.json
+          cat official-native-stage.json
+
+      - name: Restore official 5.6.7 FFmpeg family
+        run: |
+          set -euo pipefail
+          python3 scripts/restore_official_567_ffmpeg.py \
+            --arm64 "$RUNNER_TEMP/fongmi-official-567/mobile-arm64_v8a.apk" \
+            --armeabi "$RUNNER_TEMP/fongmi-official-567/mobile-armeabi_v7a.apk" \
+            --media3-root media3
+
+      - name: Restore official 5.6.7 MPV disc menu binaries
+        run: |
+          set -euo pipefail
+          python3 scripts/recover_official_mpv.py \
+            --arm64 "$RUNNER_TEMP/fongmi-official-567/mobile-arm64_v8a.apk" \
+            --armeabi "$RUNNER_TEMP/fongmi-official-567/mobile-armeabi_v7a.apk" \
+            --media3-root media3
+
+      - name: Verify official 5.6.7 Dolby Vision JNI against FFmpeg
+        run: |
+          set -euo pipefail
+          python3 scripts/verify_official_dovi_linkage.py \
+            --media3-root media3 \
+            --app-root app
 
       - name: Build matching FongMi Media3 AARs
         env:
@@ -179,7 +247,35 @@ jobs:
           echo "== Media3 AARs copied to app/libs =="
           find app/libs -maxdepth 1 -type f -name 'lib-*-release.aar' -print | sort
 
-      - name: Verify expected build tasks
+      - name: Build the original FongMi libass module from source
+        env:
+          GRADLE_OPTS: "-Dorg.gradle.internal.http.connectionTimeout=120000 -Dorg.gradle.internal.http.socketTimeout=120000"
+        run: |
+          set -euo pipefail
+          bash media3-ass/libraries/exoplayer_libass/src/main/jni/prepare_libass.sh
+          ./media3-ass/gradlew -p media3-ass :lib-exoplayer-libass:assembleRelease --stacktrace --no-daemon
+          source_aar="$(find media3-ass -type f -path '*/outputs/aar/lib-exoplayer-libass-release.aar' -print -quit)"
+          test -n "$source_aar"
+          cp "$source_aar" app/libs/lib-exoplayer-libass-release.aar
+          python3 scripts/test_libass_aar.py
+
+      - name: Test Matroska subtitles and ISO 9660 disc reading
+        run: |
+          set -euo pipefail
+          ./media3/gradlew -p media3 :lib-extractor:testDebugUnitTest \
+            --tests 'androidx.media3.extractor.mkv.MatroskaExtractorNonParameterizedTest' \
+            --tests 'androidx.media3.extractor.iso.udf.Iso9660FallbackTest' \
+            --no-daemon
+
+      - name: Test native menu commands and Dolby Vision P5 policy
+        run: |
+          set -euo pipefail
+          ./media3/gradlew -p media3 :lib-mpvplayer:testDebugUnitTest \
+            --tests 'androidx.media3.mpvplayer.nativebridge.MpvCommandDispatcherTest' --no-daemon
+          ./media3/gradlew -p media3 :lib-decoder-ffmpeg:testDebugUnitTest \
+            --tests 'androidx.media3.decoder.ffmpeg.FfmpegDolbyVisionOutputTest' --no-daemon
+
+      - name: Verify expected build tasks for app
         run: |
           set -euo pipefail
           ./gradlew :app:tasks --all --no-daemon > app-tasks.txt
@@ -243,26 +339,81 @@ jobs:
           echo "== Final APKs =="
           ls -lh dist/
 
+          for apk in dist/*.apk; do
+            case "$apk" in
+              *arm64*) abi=arm64-v8a ;;
+              *armeabi*) abi=armeabi-v7a ;;
+              *) echo "::error::Unknown ABI for $apk"; exit 1 ;;
+            esac
+            unzip -Z1 "$apk" | grep -Fx "lib/$abi/libmedia3ass.so" >/dev/null || {
+              echo "::error::Missing native libass in $apk ($abi)"
+              exit 1
+            }
+            unzip -Z1 "$apk" | grep -Fx "lib/$abi/libmpv.so" >/dev/null || {
+              echo "::error::Missing native MPV disc navigation in $apk ($abi)"
+              exit 1
+            }
+            for native in libisoJNI.so libffmpegDoviJNI.so libcmg_decrypt.so libmedia3effect.so; do
+              unzip -Z1 "$apk" | grep -Fx "lib/$abi/$native" >/dev/null || {
+                echo "::error::Missing staged official native $native in $apk ($abi)"
+                exit 1
+              }
+            done
+            for bdj in libbluray-j2se-1.4.1.jar libbluray-awt-j2se-1.4.1.jar; do
+              unzip -Z1 "$apk" | grep -Fx "assets/bdj/$bdj" >/dev/null || {
+                echo "::error::Missing BD-J asset $bdj in $apk"
+                exit 1
+              }
+            done
+          done
+
+          # Verify the source-built ISO 9660 reader survived AAR copying and R8 packaging.
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+
+          marker = b"ISO 9660: primary volume descriptor not found"
+          for apk in sorted(Path("dist").glob("*.apk")):
+              with ZipFile(apk) as archive:
+                  dex_names = [name for name in archive.namelist() if name.endswith(".dex")]
+                  if not any(marker in archive.read(name) for name in dex_names):
+                      raise SystemExit(f"::error::ISO 9660 reader missing from {apk}")
+                  abi = "arm64-v8a" if "arm64" in apk.name else "armeabi-v7a"
+                  mpv = archive.read(f"lib/{abi}/libmpv.so")
+                  if not all(symbol in mpv for symbol in (b"dvdnav_menu_call", b"bd_menu_call", b"disc-menu-active")):
+                      raise SystemExit(f"::error::MPV disc menu support missing from {apk}")
+                  dex_blob = b"".join(archive.read(name) for name in dex_names)
+                  for bridge in (
+                      b"androidx/media3/extractor/iso/udf/NativeUdfFileSystem",
+                      b"androidx/media3/exoplayer/iso/IsoNavigationSession",
+                      b"androidx/media3/decoder/ffmpeg/FfmpegDolbyVisionP5Native",
+                  ):
+                      if bridge not in dex_blob:
+                          raise SystemExit(f"::error::JNI bridge class {bridge!r} missing from {apk}")
+              print(f"ISO 9660 reader found in {apk}")
+          PY
+
       - name: Upload four APKs to Actions
         uses: actions/upload-artifact@v4
         with:
-          name: TV-5.6.6-four-apks
+          name: TV-5.6.7-four-apks
           path: dist/*.apk
           if-no-files-found: error
           retention-days: 30
 
       - name: Publish four APKs to GitHub Release
-        if: github.ref == 'refs/heads/fongmi' || github.ref == 'refs/heads/codex/media3-public-compat-manual-20260927'
+        if: github.ref == 'refs/heads/fongmi'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
 
           TAG="auto-${{ github.run_number }}"
-          TITLE="TV 5.6.6 自动构建"
+          TITLE="TV 5.6.7 自动构建"
+          RELEASE_FLAGS=(--latest)
 
           cat > release-notes.md <<EOF
-          TV 5.6.6 自动构建
+          TV 5.6.7 自动构建
 
           Commit: ${{ github.sha }}
 
@@ -270,6 +421,12 @@ jobs:
           - mobile armeabi-v7a
           - leanback arm64-v8a
           - leanback armeabi-v7a
+          EOF
+
+          cat >> release-notes.md <<'EOF'
+
+          此自动构建使用已验证的官方 5.6.7 原生组件链：FFmpeg、MPV discnav、ISO/UDF JNI、Dolby Vision P5 JNI、CMG/effect 与 BD-J 资源均在 CI 中恢复并校验。
+          该主分支构建保持稳定 5.6.7 基线；EXO 导航状态机的实验性接管改动不包含在本次自动构建中。
           EOF
 
           if gh release view "$TAG" >/dev/null 2>&1; then
@@ -282,7 +439,7 @@ jobs:
             --target "$GITHUB_SHA" \
             --title "$TITLE" \
             --notes-file release-notes.md \
-            --latest
+            "${RELEASE_FLAGS[@]}"
 
           for APK in \
             "dist/mobile-arm64-v8a.apk" \

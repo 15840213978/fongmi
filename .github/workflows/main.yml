@@ -169,9 +169,43 @@ jobs:
             --connect-timeout 20 --max-time 600 \
             "https://github.com/FongMi/Release/releases/download/5.6.8/mobile-armeabi_v7a.apk" \
             --output "$RUNNER_TEMP/fongmi-official-568/mobile-armeabi_v7a.apk"
-          echo "== Official 5.6.8 APK SHA256 =="
-          sha256sum "$RUNNER_TEMP/fongmi-official-568/mobile-arm64_v8a.apk"
-          sha256sum "$RUNNER_TEMP/fongmi-official-568/mobile-armeabi_v7a.apk"
+          echo "2e23a0ecc61f3fb908a566661f9e3f78d0027198671e0aed6bd1b94570c3eaea  $RUNNER_TEMP/fongmi-official-568/mobile-arm64_v8a.apk" | sha256sum --check
+          echo "6c062459ccd6b0f8c4bfb4293b47b732e47943032b1d9959fc4bcd1b45d299f9  $RUNNER_TEMP/fongmi-official-568/mobile-armeabi_v7a.apk" | sha256sum --check
+
+      - name: Update compatibility scripts for official 5.6.8 hashes
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          replacements = {
+              "5428c11d5aa09813dfa2fde8a32be2beeeddfc45d093b89e46ed53cd696a3b3c": "2e23a0ecc61f3fb908a566661f9e3f78d0027198671e0aed6bd1b94570c3eaea",
+              "492bc0b1d4607a41d3c3f56d37bc590be0ee6b8b481bebe52f6dd2b0819d2385": "6c062459ccd6b0f8c4bfb4293b47b732e47943032b1d9959fc4bcd1b45d299f9",
+          }
+
+          files = [
+              Path("scripts/stage_official_native_test.py"),
+              Path("scripts/restore_official_567_ffmpeg.py"),
+              Path("scripts/recover_official_mpv.py"),
+          ]
+
+          for path in files:
+              data = path.read_text(encoding="utf-8")
+              for old, new in replacements.items():
+                  data = data.replace(old, new)
+              data = data.replace("official 5.6.7", "official 5.6.8")
+              data = data.replace("Official 5.6.7", "Official 5.6.8")
+              data = data.replace("official-5.6.7-apks", "official-5.6.8-apks")
+              data = data.replace('"5.6.7" if source == "official-5.6.8-apks"', '"5.6.8" if source == "official-5.6.8-apks"')
+              data = data.replace("Staged verified 5.6.7 payloads", "Staged verified 5.6.8 payloads")
+              path.write_text(data, encoding="utf-8")
+              print(f"Updated {path} for official 5.6.8")
+
+          for path in files:
+              data = path.read_text(encoding="utf-8")
+              if "5428c11d5aa09813dfa2fde8a32be2beeeddfc45d093b89e46ed53cd696a3b3c" in data or "492bc0b1d4607a41d3c3f56d37bc590be0ee6b8b481bebe52f6dd2b0819d2385" in data:
+                  raise SystemExit(f"stale 5.6.7 APK hash remains in {path}")
+          PY
 
       - name: Stage official 5.6.8 native payloads
         run: |
@@ -186,7 +220,7 @@ jobs:
       - name: Restore official 5.6.8 FFmpeg family
         run: |
           set -euo pipefail
-          python3 scripts/restore_official_568_ffmpeg.py \
+          python3 scripts/restore_official_567_ffmpeg.py \
             --arm64 "$RUNNER_TEMP/fongmi-official-568/mobile-arm64_v8a.apk" \
             --armeabi "$RUNNER_TEMP/fongmi-official-568/mobile-armeabi_v7a.apk" \
             --media3-root media3

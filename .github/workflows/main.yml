@@ -1,6 +1,6 @@
 name: Build APK
 # Player dependencies are pinned below for reproducible four-APK builds.
-# FongMi 5.6.8 EXO navigation build: restore native chain and verify navigation state.
+# FongMi 5.6.9 EXO navigation build: restore native chain and verify navigation state.
 
 on:
   push:
@@ -157,30 +157,30 @@ jobs:
           python3 scripts/restore_exo_disc_navigation.py --media3-root media3
           git -C media3 diff --check
 
-      - name: Download verified official 5.6.8 APKs
+      - name: Download verified official 5.6.9 APKs
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/fongmi-official-568"
+          mkdir -p "$RUNNER_TEMP/fongmi-official-569"
           curl --fail --location --retry 3 --retry-all-errors \
             --connect-timeout 20 --max-time 600 \
-            "https://github.com/FongMi/Release/releases/download/5.6.8/mobile-arm64_v8a.apk" \
-            --output "$RUNNER_TEMP/fongmi-official-568/mobile-arm64_v8a.apk"
+            "https://github.com/FongMi/Release/releases/download/5.6.9/mobile-arm64_v8a.apk" \
+            --output "$RUNNER_TEMP/fongmi-official-569/mobile-arm64_v8a.apk"
           curl --fail --location --retry 3 --retry-all-errors \
             --connect-timeout 20 --max-time 600 \
-            "https://github.com/FongMi/Release/releases/download/5.6.8/mobile-armeabi_v7a.apk" \
-            --output "$RUNNER_TEMP/fongmi-official-568/mobile-armeabi_v7a.apk"
-          echo "2e23a0ecc61f3fb908a566661f9e3f78d0027198671e0aed6bd1b94570c3eaea  $RUNNER_TEMP/fongmi-official-568/mobile-arm64_v8a.apk" | sha256sum --check
-          echo "6c062459ccd6b0f8c4bfb4293b47b732e47943032b1d9959fc4bcd1b45d299f9  $RUNNER_TEMP/fongmi-official-568/mobile-armeabi_v7a.apk" | sha256sum --check
+            "https://github.com/FongMi/Release/releases/download/5.6.9/mobile-armeabi_v7a.apk" \
+            --output "$RUNNER_TEMP/fongmi-official-569/mobile-armeabi_v7a.apk"
+          echo "55f1bb3e780d2635bb216680361ca7b78f9c5773e730c4d9d537ab757e8fb6f4  $RUNNER_TEMP/fongmi-official-569/mobile-arm64_v8a.apk" | sha256sum --check
+          echo "1e7059ab265f56c633cce7b2058006a527bda4e2f95f91921a9d16054bd648e0  $RUNNER_TEMP/fongmi-official-569/mobile-armeabi_v7a.apk" | sha256sum --check
 
-      - name: Update compatibility scripts for official 5.6.8 hashes
+      - name: Update compatibility scripts for official 5.6.9 hashes
         run: |
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
 
           replacements = {
-              "5428c11d5aa09813dfa2fde8a32be2beeeddfc45d093b89e46ed53cd696a3b3c": "2e23a0ecc61f3fb908a566661f9e3f78d0027198671e0aed6bd1b94570c3eaea",
-              "492bc0b1d4607a41d3c3f56d37bc590be0ee6b8b481bebe52f6dd2b0819d2385": "6c062459ccd6b0f8c4bfb4293b47b732e47943032b1d9959fc4bcd1b45d299f9",
+              "5428c11d5aa09813dfa2fde8a32be2beeeddfc45d093b89e46ed53cd696a3b3c": "55f1bb3e780d2635bb216680361ca7b78f9c5773e730c4d9d537ab757e8fb6f4",
+              "492bc0b1d4607a41d3c3f56d37bc590be0ee6b8b481bebe52f6dd2b0819d2385": "1e7059ab265f56c633cce7b2058006a527bda4e2f95f91921a9d16054bd648e0",
           }
 
           files = [
@@ -193,13 +193,13 @@ jobs:
               data = path.read_text(encoding="utf-8")
               for old, new in replacements.items():
                   data = data.replace(old, new)
-              data = data.replace("official 5.6.7", "official 5.6.8")
-              data = data.replace("Official 5.6.7", "Official 5.6.8")
-              data = data.replace("official-5.6.7-apks", "official-5.6.8-apks")
-              data = data.replace('"5.6.7" if source == "official-5.6.8-apks"', '"5.6.8" if source == "official-5.6.8-apks"')
-              data = data.replace("Staged verified 5.6.7 payloads", "Staged verified 5.6.8 payloads")
+              data = data.replace("official 5.6.7", "official 5.6.9")
+              data = data.replace("Official 5.6.7", "Official 5.6.9")
+              data = data.replace("official-5.6.7-apks", "official-5.6.9-apks")
+              data = data.replace('"5.6.7" if source == "official-5.6.9-apks"', '"5.6.9" if source == "official-5.6.9-apks"')
+              data = data.replace("Staged verified 5.6.7 payloads", "Staged verified 5.6.9 payloads")
               path.write_text(data, encoding="utf-8")
-              print(f"Updated {path} for official 5.6.8")
+              print(f"Updated {path} for official 5.6.9")
 
           for path in files:
               data = path.read_text(encoding="utf-8")
@@ -207,33 +207,33 @@ jobs:
                   raise SystemExit(f"stale 5.6.7 APK hash remains in {path}")
           PY
 
-      - name: Stage official 5.6.8 native payloads
+      - name: Stage official 5.6.9 native payloads
         run: |
           set -euo pipefail
           python3 scripts/stage_official_native_test.py \
-            --arm64 "$RUNNER_TEMP/fongmi-official-568/mobile-arm64_v8a.apk" \
-            --armeabi "$RUNNER_TEMP/fongmi-official-568/mobile-armeabi_v7a.apk" \
+            --arm64 "$RUNNER_TEMP/fongmi-official-569/mobile-arm64_v8a.apk" \
+            --armeabi "$RUNNER_TEMP/fongmi-official-569/mobile-armeabi_v7a.apk" \
             --app-root app \
             --report official-native-stage.json
           cat official-native-stage.json
 
-      - name: Restore official 5.6.8 FFmpeg family
+      - name: Restore official 5.6.9 FFmpeg family
         run: |
           set -euo pipefail
           python3 scripts/restore_official_567_ffmpeg.py \
-            --arm64 "$RUNNER_TEMP/fongmi-official-568/mobile-arm64_v8a.apk" \
-            --armeabi "$RUNNER_TEMP/fongmi-official-568/mobile-armeabi_v7a.apk" \
+            --arm64 "$RUNNER_TEMP/fongmi-official-569/mobile-arm64_v8a.apk" \
+            --armeabi "$RUNNER_TEMP/fongmi-official-569/mobile-armeabi_v7a.apk" \
             --media3-root media3
 
-      - name: Restore official 5.6.8 MPV disc menu binaries
+      - name: Restore official 5.6.9 MPV disc menu binaries
         run: |
           set -euo pipefail
           python3 scripts/recover_official_mpv.py \
-            --arm64 "$RUNNER_TEMP/fongmi-official-568/mobile-arm64_v8a.apk" \
-            --armeabi "$RUNNER_TEMP/fongmi-official-568/mobile-armeabi_v7a.apk" \
+            --arm64 "$RUNNER_TEMP/fongmi-official-569/mobile-arm64_v8a.apk" \
+            --armeabi "$RUNNER_TEMP/fongmi-official-569/mobile-armeabi_v7a.apk" \
             --media3-root media3
 
-      - name: Verify official 5.6.8 Dolby Vision JNI against FFmpeg
+      - name: Verify official 5.6.9 Dolby Vision JNI against FFmpeg
         run: |
           set -euo pipefail
           python3 scripts/verify_official_dovi_linkage.py \
@@ -435,7 +435,7 @@ jobs:
       - name: Upload four APKs to Actions
         uses: actions/upload-artifact@v4
         with:
-          name: TV-5.6.8-four-apks
+          name: TV-5.6.9-four-apks
           path: dist/*.apk
           if-no-files-found: error
           retention-days: 30
@@ -448,11 +448,11 @@ jobs:
           set -euo pipefail
 
           TAG="auto-${{ github.run_number }}"
-          TITLE="TV 5.6.8 自动构建"
+          TITLE="TV 5.6.9 自动构建"
           RELEASE_FLAGS=(--latest)
 
           cat > release-notes.md <<EOF
-          TV 5.6.8 自动构建
+          TV 5.6.9 自动构建
 
           Commit: ${{ github.sha }}
 
@@ -464,7 +464,7 @@ jobs:
 
           cat >> release-notes.md <<'EOF'
 
-          此自动构建使用已验证的官方 5.6.8 原生组件链：FFmpeg、MPV discnav、ISO/UDF JNI、Dolby Vision P5 JNI、CMG/effect 与 BD-J 资源均在 CI 中恢复并校验。
+          此自动构建使用已验证的官方 5.6.9 原生组件链：FFmpeg、MPV discnav、ISO/UDF JNI、Dolby Vision P5 JNI、CMG/effect 与 BD-J 资源均在 CI 中恢复并校验。
           本构建已启用 EXO 光盘导航接管：DVD/BD ISO 优先通过 IsoNavigationSession + nativeRead 导航流播放，菜单方向/确认/菜单/弹出/返回及触控指针统一进入同一导航 session；不支持的镜像继续回退静态 ISO 解析。CI 已校验 EXO 导航类进入最终 DEX。复杂菜单的 segment/discontinuity 切换、BD-J 交互与真实 Dolby Vision 输出仍需 ARM 真机和真实光盘镜像验证。
           EOF
 

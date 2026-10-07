@@ -7,6 +7,9 @@ on:
     branches: [ fongmi ]
   workflow_dispatch:
 
+env:
+  JAVA_TOOL_OPTIONS: "-Dorg.gradle.java.home=$JAVA_HOME"
+
 permissions:
   contents: write
   actions: read
@@ -48,6 +51,7 @@ jobs:
         with:
           java-version: '21'
           distribution: 'temurin'
+          cache: gradle
 
       - name: Install Python 3.10
         run: |

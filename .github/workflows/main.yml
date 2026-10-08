@@ -7,9 +7,6 @@ on:
     branches: [ fongmi ]
   workflow_dispatch:
 
-env:
-  JAVA_TOOL_OPTIONS: "-Dorg.gradle.java.home=$JAVA_HOME"
-
 permissions:
   contents: write
   actions: read

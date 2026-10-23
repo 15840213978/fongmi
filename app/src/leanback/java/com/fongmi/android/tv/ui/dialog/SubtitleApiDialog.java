@@ -11,10 +11,7 @@ import com.fongmi.android.tv.R;
 import com.fongmi.android.tv.databinding.DialogSingleInputBinding;
 import com.fongmi.android.tv.event.ServerEvent;
 import com.fongmi.android.tv.impl.SubtitleListener;
-import com.fongmi.android.tv.server.Server;
 import com.fongmi.android.tv.setting.SubtitleSetting;
-import com.fongmi.android.tv.utils.QRCode;
-import com.fongmi.android.tv.utils.ResUtil;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
 import org.greenrobot.eventbus.EventBus;
@@ -45,12 +42,11 @@ public class SubtitleApiDialog extends BaseAlertDialog {
         binding.text.setHint(R.string.subtitle_search_token_hint);
         binding.text.setText(text = SubtitleSetting.getEffectiveToken());
         binding.text.setSelection(TextUtils.isEmpty(text) ? 0 : text.length());
-        binding.code.setImageBitmap(QRCode.getBitmap(Server.get().getAddress(4), 200, 0));
-        binding.info.setText(ResUtil.getString(R.string.push_info, Server.get().getAddress()).replace("\uff0c", "\n"));
     }
 
     @Override
     protected void initEvent() {
+        binding.phone.setOnClickListener(view -> LocalConnectDialog.show(requireActivity(), "settings"));
         binding.positive.setOnClickListener(this::onPositive);
         binding.negative.setOnClickListener(this::onNegative);
         binding.text.setOnEditorActionListener((textView, actionId, event) -> {

@@ -5,6 +5,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.graphics.drawable.Drawable;
 import android.os.Bundle;
+import android.text.TextUtils;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
@@ -15,7 +16,6 @@ import androidx.leanback.widget.OnChildViewHolderSelectedListener;
 import androidx.lifecycle.ViewModelProvider;
 import androidx.media3.common.MediaMetadata;
 import androidx.media3.common.Player;
-import androidx.media3.common.VideoSize;
 import androidx.media3.ui.PlayerSeekView;
 import androidx.media3.ui.PlayerView;
 import androidx.recyclerview.widget.RecyclerView;
@@ -61,6 +61,7 @@ import com.fongmi.android.tv.ui.dialog.HistoryDialog;
 import com.fongmi.android.tv.ui.dialog.LiveDialog;
 import com.fongmi.android.tv.ui.dialog.PassDialog;
 import com.fongmi.android.tv.ui.dialog.PlayerEngineDialog;
+import com.fongmi.android.tv.ui.dialog.DecoderSettingDialog;
 import com.fongmi.android.tv.ui.dialog.SpeedSettingDialog;
 import com.fongmi.android.tv.ui.dialog.TrackDialog;
 import com.fongmi.android.tv.utils.Clock;
@@ -97,7 +98,6 @@ public class LiveActivity extends PlaybackActivity implements GroupAdapter.OnCli
     private List<Group> mHides;
     private Group mGroup;
     private Channel mChannel;
-    private Channel mRestoreChannel;
     private String mPlaybackKey;
     private int count;
 
@@ -183,11 +183,12 @@ public class LiveActivity extends PlaybackActivity implements GroupAdapter.OnCli
         mBinding.control.action.scale.setOnClickListener(view -> onScale());
         mBinding.control.action.speed.setOnClickListener(view -> onSpeed());
         mBinding.control.action.config.setOnClickListener(view -> onConfig());
-        mBinding.control.action.action.setOnClickListener(view -> onAction());
+        mBinding.control.action.playPause.setOnClickListener(view -> onAction());
         mBinding.control.action.invert.setOnClickListener(view -> onInvert());
         mBinding.control.action.across.setOnClickListener(view -> onAcross());
         mBinding.control.action.change.setOnClickListener(view -> onChange());
         mBinding.control.action.player.setOnClickListener(view -> onPlayer());
+        mBinding.control.action.decoder.setOnClickListener(view -> onDecoder());
         mBinding.control.action.speed.setOnLongClickListener(view -> onSpeedLong());
         mBinding.video.setOnTouchListener((view, event) -> mInput.onTouchEvent(event));
         mBinding.group.addOnChildViewHolderSelectedListener(new OnChildViewHolderSelectedListener() {
@@ -224,7 +225,7 @@ public class LiveActivity extends PlaybackActivity implements GroupAdapter.OnCli
 
     private void setScale(int scale) {
         LiveSetting.putScale(scale);
-        mBinding.player.setResizeMode(scale);
+        mBinding.player.setResizeMode(PlayerSetting.getScaleMode(scale));
         mBinding.control.action.scale.setText(ResUtil.getStringArray(R.array.select_scale)[scale]);
     }
 
@@ -254,11 +255,8 @@ public class LiveActivity extends PlaybackActivity implements GroupAdapter.OnCli
     }
 
     private void checkLive() {
-        if (isEmpty()) {
-            LiveConfig.get().init().load(getCallback());
-        } else {
-            getLive();
-        }
+        if (isEmpty()) LiveConfig.get().init().load(getCallback());
+        else getLive();
     }
 
     private Callback getCallback() {
@@ -285,9 +283,7 @@ public class LiveActivity extends PlaybackActivity implements GroupAdapter.OnCli
         List<Group> items = new ArrayList<>();
         for (Group group : live.getGroups()) (group.isHidden() ? mHides : items).add(group);
         mGroupAdapter.addAll(items);
-        int[] position = LiveConfig.get().findChannelPosition(mRestoreChannel, items);
-        mRestoreChannel = null;
-        setPosition(position[0] == -1 ? LiveConfig.get().findKeepPosition(items) : position);
+        setPosition(LiveConfig.get().findKeepPosition(items));
     }
 
     private void setWidth(Live live) {
@@ -360,10 +356,6 @@ public class LiveActivity extends PlaybackActivity implements GroupAdapter.OnCli
         mChannelAdapter.setSelected(mChannel);
     }
 
-    private void setSelected(EpgData item) {
-        mEpgDataAdapter.setSelected(item);
-    }
-
     private void checkPlay() {
         if (isWebPlaybackPlaying() || player().isPlaying()) onPaused();
         else onPlay();
@@ -385,9 +377,7 @@ public class LiveActivity extends PlaybackActivity implements GroupAdapter.OnCli
     }
 
     private void onScale() {
-        int index = LiveSetting.getScale();
-        String[] array = ResUtil.getStringArray(R.array.select_scale);
-        setScale(index == array.length - 1 ? 0 : ++index);
+        setScale((LiveSetting.getScale() + 1) % ResUtil.getStringArray(R.array.select_scale).length);
     }
 
     private void onSpeed() {
@@ -429,6 +419,11 @@ public class LiveActivity extends PlaybackActivity implements GroupAdapter.OnCli
         hideControl();
     }
 
+    private void onDecoder() {
+        DecoderSettingDialog.create().show(this);
+        hideControl();
+    }
+
     private void hideUI() {
         App.removeCallbacks(mR4);
         if (isGone(mBinding.recycler)) return;
@@ -445,6 +440,29 @@ public class LiveActivity extends PlaybackActivity implements GroupAdapter.OnCli
     }
 
     private final PlaybackService.NavigationCallback mNavigationCallback = new PlaybackService.NavigationCallback() {
+
+        @Override
+        public boolean canSetSpeed() {
+            return false;
+        }
+
+        @Override
+        public Boolean isKept() {
+            return mChannel == null || mGroup == null || mGroup.isHidden() ? null : Keep.exist(mChannel.getName());
+        }
+
+        @Override
+        public boolean onKeep() {
+            return isKept() != null && onLongClick(mChannel);
+        }
+
+        @Override
+        public boolean onPush(String url) {
+            if (isFinishing() || isDestroyed()) return false;
+            mLive.redirectPush(url);
+            return true;
+        }
+
         @Override
         public boolean isExternalPlaybackActive() {
             return isWebPlaybackActive();
@@ -472,6 +490,7 @@ public class LiveActivity extends PlaybackActivity implements GroupAdapter.OnCli
 
         @Override
         public void onStop() {
+            mLive.reset();
             finish();
         }
     };
@@ -530,12 +549,7 @@ public class LiveActivity extends PlaybackActivity implements GroupAdapter.OnCli
     }
 
     private void updatePlayControl(boolean isPlaying) {
-        mBinding.control.action.action.setText(isPlaying ? R.string.pause : R.string.play);
-    }
-
-    @Override
-    protected void onSizeChanged(VideoSize size) {
-        mBinding.widget.size.setText(player().getSizeText());
+        mBinding.control.action.playPause.setText(isPlaying ? R.string.pause : R.string.play);
     }
 
     @Override
@@ -597,7 +611,7 @@ public class LiveActivity extends PlaybackActivity implements GroupAdapter.OnCli
     }
 
     private void hideCenter() {
-        mBinding.widget.action.setImageResource(R.drawable.ic_widget_play);
+        mBinding.widget.statusIcon.setImageResource(R.drawable.ic_widget_play);
         mBinding.widget.center.setVisibility(View.GONE);
     }
 
@@ -677,6 +691,7 @@ public class LiveActivity extends PlaybackActivity implements GroupAdapter.OnCli
         Notify.show(exist ? R.string.keep_del : R.string.keep_add);
         if (exist) delKeep(item);
         else addKeep(item);
+        RefreshEvent.keep();
         return true;
     }
 
@@ -716,10 +731,7 @@ public class LiveActivity extends PlaybackActivity implements GroupAdapter.OnCli
     private void onEpgLoaded(Epg epg) {
         if (mChannel == null || !mChannel.getTvgId().equals(epg.getKey())) return;
         EpgData data = epg.getEpgData();
-        boolean hasTitle = !data.getTitle().isEmpty();
         mEpgDataAdapter.addAll(epg.getList());
-        mBinding.widget.name.setMaxEms(hasTitle ? 12 : 48);
-        mBinding.widget.play.setText(data.format());
         mLive.onEpgChanged(data);
         setWidth(epg);
     }
@@ -785,6 +797,11 @@ public class LiveActivity extends PlaybackActivity implements GroupAdapter.OnCli
     }
 
     @Override
+    public void preparePlaybackForRefresh() {
+        player().prepareForReplacement();
+    }
+
+    @Override
     public void stopPlaybackForRefresh() {
         stopWebPlayback();
         stopPlayer();
@@ -793,11 +810,14 @@ public class LiveActivity extends PlaybackActivity implements GroupAdapter.OnCli
     @Override
     public void startPlayback(Result result, long position, MediaMetadata metadata) {
         mPlaybackKey = result.getRealUrl();
-        if (startWebPlayback(mBinding.video, result, mInput::onTouchEvent)) {
-            updateNavigationKey(mPlaybackKey);
-            return;
-        }
+        if (startWebPlayback(result)) return;
         startPlayer(mPlaybackKey, result, false, getHome().getTimeout(), position, metadata);
+    }
+
+    private boolean startWebPlayback(Result result) {
+        if (!startWebPlayback(mBinding.video, result, mInput::onTouchEvent)) return false;
+        updateNavigationKey(mPlaybackKey);
+        return true;
     }
 
     @Override
@@ -834,24 +854,25 @@ public class LiveActivity extends PlaybackActivity implements GroupAdapter.OnCli
 
     @Override
     public void renderEpgSelection(EpgData data) {
-        setSelected(data);
+        mEpgDataAdapter.setSelected(data);
     }
 
     @Override
     public void renderPlaybackMetadata(MediaMetadata metadata) {
         if (service() != null && isOwner()) player().setMetadata(metadata);
+        mBinding.widget.name.setMaxEms(TextUtils.isEmpty(metadata.subtitle) ? 48 : 12);
+        mBinding.widget.play.setText(metadata.subtitle);
         mBinding.widget.title.setText(metadata.displayTitle);
         mBinding.widget.title.setSelected(true);
-    }
-
-    @Override
-    public void showCatchupReady(EpgData data) {
-        Notify.show(getString(R.string.play_ready, data.getTitle()));
+        mBinding.widget.subtitle.setText(metadata.subtitle);
+        mBinding.widget.subtitle.setVisibility(TextUtils.isEmpty(metadata.subtitle) ? View.GONE : View.VISIBLE);
     }
 
     private void resetAdapter() {
         mBinding.control.action.line.setVisibility(View.GONE);
         mBinding.widget.title.setText("");
+        mBinding.widget.subtitle.setText("");
+        mBinding.widget.subtitle.setVisibility(View.GONE);
         mEpgDataAdapter.clear();
         mChannelAdapter.clear();
         mGroupAdapter.clear();
@@ -889,7 +910,6 @@ public class LiveActivity extends PlaybackActivity implements GroupAdapter.OnCli
 
     @Override
     public void setLive(Live item) {
-        if (mChannel != null) mRestoreChannel = Channel.create(mChannel);
         if (item.isSelected()) item.getGroups().clear();
         LiveConfig.get().setHome(item);
         player().reset();
@@ -921,17 +941,31 @@ public class LiveActivity extends PlaybackActivity implements GroupAdapter.OnCli
         }
     }
 
+    private void refreshKeeps() {
+        if (mGroupAdapter.getItemCount() == 0 || !getKeep().isKeep()) return;
+        getKeep().getChannel().clear();
+        LiveConfig.get().applyKeepsToGroups(mGroupAdapter.unmodifiableList());
+        if (mGroup != null && mGroup.isKeep()) mChannelAdapter.addAll(getKeep().getChannel());
+    }
+
     @Subscribe(threadMode = ThreadMode.MAIN)
     public void onRefreshEvent(RefreshEvent event) {
         switch (event.getType()) {
             case LIVE -> setLive(getHome());
+            case KEEP -> refreshKeeps();
             case PLAYER -> mLive.refresh();
         }
     }
 
     @Override
+    protected void onWebProgressChanged(boolean visible) {
+        if (visible) showProgress();
+        else hideProgress();
+    }
+
+    @Override
     protected void onWebPlaybackChanged(boolean active) {
-        PlaybackAction.setWebPlaybackMode(active, mBinding.control.action.player, mBinding.control.action.speed, mBinding.control.action.scale, mBinding.control.action.text, mBinding.control.action.audio, mBinding.control.action.video);
+        PlaybackAction.setWebPlaybackMode(active, mBinding.control.action.player, mBinding.control.action.decoder, mBinding.control.action.speed, mBinding.control.action.scale, mBinding.control.action.text, mBinding.control.action.audio, mBinding.control.action.video);
         if (!active) {
             setPlaybackMode();
             setTrackVisible();
@@ -957,10 +991,6 @@ public class LiveActivity extends PlaybackActivity implements GroupAdapter.OnCli
 
     private void nextLine(boolean show) {
         mLive.nextLine(show);
-    }
-
-    private void seek(long time) {
-        seekTo(time);
     }
 
     private void onPaused() {
@@ -1011,9 +1041,8 @@ public class LiveActivity extends PlaybackActivity implements GroupAdapter.OnCli
     public void onSeeking(long time) {
         if (player().isLive()) return;
         mBinding.widget.center.setVisibility(View.VISIBLE);
-        mBinding.widget.duration.setText(player().getDurationTime());
-        mBinding.widget.position.setText(player().getPositionTime(time));
-        mBinding.widget.action.setImageResource(time > 0 ? R.drawable.ic_widget_forward : R.drawable.ic_widget_rewind);
+        setSeekPreviewTime(mBinding.widget.duration, mBinding.widget.position, time);
+        mBinding.widget.statusIcon.setImageResource(time > 0 ? R.drawable.ic_widget_forward : R.drawable.ic_widget_rewind);
         hideProgress();
     }
 
@@ -1032,13 +1061,13 @@ public class LiveActivity extends PlaybackActivity implements GroupAdapter.OnCli
     @Override
     public void onKeyLeft(long time) {
         if (player().isLive()) prevLine();
-        else App.post(() -> seek(time), 250);
+        else App.post(() -> seekTo(time), 250);
     }
 
     @Override
     public void onKeyRight(long time) {
         if (player().isLive()) nextLine(true);
-        else App.post(() -> seek(time), 250);
+        else App.post(() -> seekTo(time), 250);
     }
 
     @Override
@@ -1055,6 +1084,13 @@ public class LiveActivity extends PlaybackActivity implements GroupAdapter.OnCli
     @Override
     public void onSingleTap() {
         onToggle();
+    }
+
+    @Override
+    public void onDoubleTap() {
+        if (isVisible(mBinding.recycler)) hideUI();
+        else if (isVisible(mBinding.control.getRoot())) hideControl();
+        else onMenu();
     }
 
     @Override
@@ -1088,7 +1124,7 @@ public class LiveActivity extends PlaybackActivity implements GroupAdapter.OnCli
     @Override
     protected void onDestroy() {
         mClock.release();
-        Source.get().exit();
+        if (isBindingOwner() && isOwner()) Source.get().exit();
         App.removeCallbacks(mR0, mR1, mR2, mR3, mR4);
         super.onDestroy();
     }

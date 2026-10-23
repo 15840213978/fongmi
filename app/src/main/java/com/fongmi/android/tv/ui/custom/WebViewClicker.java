@@ -36,17 +36,16 @@ final class WebViewClicker {
                 + "var r=e.getBoundingClientRect(),s=getComputedStyle(e);"
                 + "if(r.width<=0||r.height<=0||s.display==='none'||s.visibility==='hidden')return null;"
                 + "return JSON.stringify([r.left+r.width/2,r.top+r.height/2,window.innerWidth,window.innerHeight]);})()";
-        view.evaluateJavascript(js, value -> onTarget(view, selectors, index, attempt, current, decodePoint(value)));
-    }
-
-    private static void onTarget(WebView view, List<String> selectors, int index, int attempt, BooleanSupplier current, float[] point) {
-        if (!current.getAsBoolean()) return;
-        if (point == null) {
-            if (attempt + 1 < MAX_ATTEMPTS) App.post(() -> click(view, selectors, index, attempt + 1, current), RETRY_DELAY_MS);
-            return;
-        }
-        dispatchClick(view, point, current);
-        App.post(() -> click(view, selectors, index + 1, 0, current), RETRY_DELAY_MS);
+        view.evaluateJavascript(js, value -> {
+            float[] point = decodePoint(value);
+            if (!current.getAsBoolean()) return;
+            if (point == null) {
+                if (attempt + 1 < MAX_ATTEMPTS) App.post(() -> click(view, selectors, index, attempt + 1, current), RETRY_DELAY_MS);
+                return;
+            }
+            dispatchClick(view, point, current);
+            App.post(() -> click(view, selectors, index + 1, 0, current), RETRY_DELAY_MS);
+        });
     }
 
     private static float[] decodePoint(String value) {
@@ -70,13 +69,15 @@ final class WebViewClicker {
         boolean handled = view.dispatchTouchEvent(down);
         down.recycle();
         SpiderDebug.log(TAG, "view=%s, handled=%s, x=%s, y=%s, viewport=%sx%s", view.getClass().getSimpleName(), handled, x, y, view.getWidth(), view.getHeight());
-        App.post(() -> {
-            int action = current.getAsBoolean() ? MotionEvent.ACTION_UP : MotionEvent.ACTION_CANCEL;
-            MotionEvent up = MotionEvent.obtain(downTime, SystemClock.uptimeMillis(), action, x, y, 0);
-            up.setSource(InputDevice.SOURCE_TOUCHSCREEN);
-            view.dispatchTouchEvent(up);
-            up.recycle();
-        }, UP_DELAY_MS);
+        App.post(() -> releaseClick(view, x, y, downTime, current), UP_DELAY_MS);
+    }
+
+    private static void releaseClick(WebView view, float x, float y, long downTime, BooleanSupplier current) {
+        int action = current.getAsBoolean() ? MotionEvent.ACTION_UP : MotionEvent.ACTION_CANCEL;
+        MotionEvent up = MotionEvent.obtain(downTime, SystemClock.uptimeMillis(), action, x, y, 0);
+        up.setSource(InputDevice.SOURCE_TOUCHSCREEN);
+        view.dispatchTouchEvent(up);
+        up.recycle();
     }
 
     static void ensureViewport(WebView view) {

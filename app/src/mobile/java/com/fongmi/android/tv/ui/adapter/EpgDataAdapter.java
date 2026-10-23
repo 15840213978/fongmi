@@ -43,13 +43,14 @@ public class EpgDataAdapter extends RecyclerView.Adapter<EpgDataAdapter.ViewHold
     }
 
     public void setSelected(int position) {
-        for (int i = 0; i < mItems.size(); i++) {
-            EpgData item = mItems.get(i);
-            boolean next = i == position;
-            if (item.isSelected() == next) continue;
-            item.setSelected(next);
-            notifyItemChanged(i, Boolean.TRUE);
-        }
+        for (int i = 0; i < mItems.size(); i++) updateSelection(i, i == position);
+    }
+
+    private void updateSelection(int position, boolean shouldSelect) {
+        EpgData item = mItems.get(position);
+        if (item.isSelected() == shouldSelect) return;
+        item.setSelected(shouldSelect);
+        notifyItemChanged(position, Boolean.TRUE);
     }
 
     @Override

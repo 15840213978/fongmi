@@ -24,7 +24,6 @@ final class PlaybackDialog {
     }
 
     static boolean isCurrentPlayer(Fragment fragment, PlayerManager player) {
-        return player != null && fragment.isAdded()
-                && ((PlaybackActivity) fragment.requireActivity()).getPlaybackPlayerState().getValue() == player;
+        return player != null && fragment.isAdded() && ((PlaybackActivity) fragment.requireActivity()).getPlaybackPlayerState().getValue() == player;
     }
 }

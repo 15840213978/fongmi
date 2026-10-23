@@ -40,8 +40,7 @@ public final class CustomTabLayout extends LinearLayoutCompat {
     static View findRedirectTarget(ViewGroup tabs, int checkedId, View focused, View next) {
         if (next == null || isDescendant(tabs, focused) || !isDescendant(tabs, next)) return null;
         View checked = tabs.findViewById(checkedId);
-        if (checked == next || checked == null || checked.getVisibility() != VISIBLE
-                || !checked.isEnabled() || !checked.isFocusable()) return null;
+        if (checked == next || checked == null || checked.getVisibility() != VISIBLE || !checked.isEnabled() || !checked.isFocusable()) return null;
         return checked;
     }
 

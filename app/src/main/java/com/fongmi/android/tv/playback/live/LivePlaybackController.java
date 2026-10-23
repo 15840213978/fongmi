@@ -6,6 +6,7 @@ import androidx.annotation.Nullable;
 import androidx.media3.common.C;
 import androidx.media3.common.MediaMetadata;
 
+import com.fongmi.android.tv.R;
 import com.fongmi.android.tv.api.config.LiveConfig;
 import com.fongmi.android.tv.bean.Channel;
 import com.fongmi.android.tv.bean.Epg;
@@ -13,8 +14,10 @@ import com.fongmi.android.tv.bean.EpgData;
 import com.fongmi.android.tv.bean.Group;
 import com.fongmi.android.tv.bean.Result;
 import com.fongmi.android.tv.playback.PlaybackResult;
+import com.fongmi.android.tv.player.extractor.Source;
 import com.fongmi.android.tv.player.media.MediaItemFactory;
 import com.fongmi.android.tv.setting.LiveSetting;
+import com.fongmi.android.tv.utils.ResUtil;
 
 public class LivePlaybackController {
 
@@ -29,6 +32,7 @@ public class LivePlaybackController {
     }
 
     public void reset() {
+        dataSource.cancelUrl();
         state.reset();
     }
 
@@ -45,10 +49,7 @@ public class LivePlaybackController {
         state.setChannel(channel);
         host.renderChannelSelection(channel);
         if (restore) restorePlaybackIfNeeded();
-        else {
-            state.clearPlayback();
-            requestLive();
-        }
+        else requestLive();
     }
 
     public boolean selectEpg(EpgData data) {
@@ -60,7 +61,6 @@ public class LivePlaybackController {
         if (channel == null || data == null) return false;
         if (data.isSelected()) return requestCatchup(data, startPositionMs);
         if (!channel.hasCatchup() && !channel.isRtsp()) return false;
-        host.showCatchupReady(data);
         host.renderEpgSelection(data);
         return requestCatchup(data, C.TIME_UNSET);
     }
@@ -73,7 +73,17 @@ public class LivePlaybackController {
     private void applyPlaybackResult(Result result, LivePlayRequest request) {
         String realUrl = result.getRealUrl();
         if (result.hasMsg() || TextUtils.isEmpty(realUrl)) failPlayback(result.getMsg());
+        else if (Source.isPush(result.getUrl().v())) redirectPush(result.getUrl().v());
         else startResolvedPlayback(result, request, realUrl);
+    }
+
+    public void redirectPush(String url) {
+        String target = url.substring("push://".length());
+        dataSource.cancelUrl();
+        state.clearPlayback();
+        host.stopPlaybackForRefresh();
+        if (target.isEmpty()) playbackError(ResUtil.getString(R.string.error_play_url));
+        else host.openPush(target);
     }
 
     private void startResolvedPlayback(Result result, LivePlayRequest request, String realUrl) {
@@ -83,22 +93,25 @@ public class LivePlaybackController {
     }
 
     private void failPlayback(String msg) {
-        state.clearPendingRequest();
+        state.clearPlayback();
+        host.stopPlaybackForRefresh();
         playbackError(msg);
     }
 
     public void playbackError(String msg) {
+        if (state.getPendingRequest() != null) return;
         host.resetPlaybackForError(msg);
         fallbackAfterError();
     }
 
     public void playbackEnded() {
+        if (state.getPendingRequest() != null) return;
         if (host.isPlayerLive()) playNextProgram();
         else nextChannel();
     }
 
     public void onEpgChanged(EpgData data) {
-        if (state.getChannel() != null) publishPlaybackMetadata(data);
+        if (state.getChannel() != null && state.getPendingRequest() == null) publishPlaybackMetadata(data);
     }
 
     public void refresh() {
@@ -118,7 +131,8 @@ public class LivePlaybackController {
         host.restorePlaybackKey(state.getPlaybackKey());
         syncPlaybackMetadata();
         if (restorePlaybackIfNeeded()) return;
-        if (state.getChannel() != null && state.getActiveRequest() == null) requestLive();
+        LivePlayRequest request = state.getActiveRequest();
+        if (state.getChannel() != null && (request == null || !request.matches(state.getChannel()))) requestLive();
     }
 
     private void syncPlaybackMetadata() {
@@ -127,6 +141,7 @@ public class LivePlaybackController {
     }
 
     private boolean restorePlaybackIfNeeded() {
+        if (state.getPendingRequest() != null) return false;
         LivePlayRequest request = state.getPlayingRequest();
         if (request == null || !request.matches(state.getChannel()) || host.hasPlaybackSession()) return false;
         refresh();
@@ -224,8 +239,7 @@ public class LivePlaybackController {
     private void requestPlayback(LivePlayRequest request, boolean showProgress) {
         if (!host.isPlaybackServiceReady()) return;
         state.setPendingRequest(request);
-        host.stopPlaybackForRefresh();
-        publishPlaybackMetadata(getEpgData(request));
+        host.preparePlaybackForRefresh();
         if (request.isCatchup()) host.onCatchupRequested();
         if (showProgress) host.showProgress();
         dataSource.getUrl(request);
@@ -254,9 +268,11 @@ public class LivePlaybackController {
 
     private MediaMetadata publishPlaybackMetadata(@Nullable EpgData liveData) {
         LivePlayRequest request = state.getActiveRequest();
+        boolean catchup = request != null && request.isCatchup();
         Channel channel = request == null ? state.getChannel() : request.getChannel();
-        EpgData data = request != null && request.isCatchup() ? request.getCatchupData() : liveData;
-        MediaMetadata metadata = buildPlaybackMetadata(channel, data);
+        EpgData data = catchup ? request.getCatchupData() : liveData;
+        int mediaType = catchup ? MediaMetadata.MEDIA_TYPE_VIDEO : MediaMetadata.MEDIA_TYPE_TV_CHANNEL;
+        MediaMetadata metadata = buildPlaybackMetadata(channel, data).buildUpon().setMediaType(mediaType).build();
         state.setPlaybackMetadata(metadata);
         host.renderPlaybackMetadata(metadata);
         return metadata;
@@ -265,14 +281,12 @@ public class LivePlaybackController {
     private MediaMetadata buildPlaybackMetadata(Channel channel, EpgData data) {
         String title = channel == null ? "" : channel.getShow();
         String logo = channel == null ? "" : channel.getLogo();
-        String artist = data == null ? "" : data.format();
-        String name = data == null ? "" : data.getTitle();
-        return MediaItemFactory.buildMetadata(title, artist, logo, name);
+        return MediaItemFactory.buildLiveMetadata(title, data, logo);
     }
 
     private boolean cannotApply(PlaybackResult<LivePlayRequest> playback) {
         LivePlayRequest pending = state.getPendingRequest();
         LivePlayRequest request = playback.request();
-        return pending == null || !pending.matches(request) || !request.matches(state.getChannel());
+        return pending == null || pending != request || !request.matches(state.getChannel());
     }
 }

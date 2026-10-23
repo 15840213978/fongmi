@@ -15,7 +15,7 @@ import com.fongmi.android.tv.R;
 import com.fongmi.android.tv.api.config.VodConfig;
 import com.fongmi.android.tv.db.AppDatabase;
 import com.fongmi.android.tv.impl.Diffable;
-import com.fongmi.android.tv.utils.Task;
+import com.github.catvod.utils.Task;
 import com.google.gson.annotations.SerializedName;
 import com.google.gson.reflect.TypeToken;
 
@@ -28,7 +28,6 @@ import java.util.concurrent.TimeUnit;
 @Entity
 public class History implements Diffable<History> {
 
-    // Distinguishes an explicit Auto choice from an unset history value during title merges.
     public static final long AUTO_SKIP = -1L;
 
     @NonNull
@@ -116,14 +115,17 @@ public class History implements Diffable<History> {
     }
 
     public static void sync(List<History> targets) {
-        targets.forEach(target -> {
-            List<History> items = findByName(target.getVodName());
-            if (items.isEmpty()) target.cid(VodConfig.getCid()).save();
-            else {
-                long latestTime = items.stream().mapToLong(History::getCreateTime).max().orElse(0L);
-                if (target.getCreateTime() > latestTime) target.cid(VodConfig.getCid()).mergeFrom(items, true).save();
-            }
-        });
+        targets.forEach(History::sync);
+    }
+
+    private void sync() {
+        List<History> items = findByName(getVodName());
+        if (items.isEmpty()) {
+            cid(VodConfig.getCid()).save();
+        } else {
+            long latestTime = items.stream().mapToLong(History::getCreateTime).max().orElse(0L);
+            if (getCreateTime() > latestTime) cid(VodConfig.getCid()).mergeFrom(items, true).save();
+        }
     }
 
     @NonNull
@@ -385,17 +387,25 @@ public class History implements Diffable<History> {
         if (!flags.get(0).getEpisodes().isEmpty()) setVodRemarks(flags.get(0).getEpisodes().get(0).getName());
         for (History item : findByName(getVodName())) {
             if (getPosition() >= 0) break;
-            for (Flag flag : flags) {
-                Episode episode = flag.find(item.getVodRemarks(), true);
-                if (episode == null) continue;
-                item.copyTo(this);
-                setVodFlag(flag.getFlag());
-                setPosition(item.getPosition());
-                setEpisodeUrl(episode.getUrl());
-                setVodRemarks(episode.getName());
-                break;
-            }
+            findEpisode(item, flags);
         }
+    }
+
+    private void findEpisode(History item, List<Flag> flags) {
+        for (Flag flag : flags) {
+            Episode episode = flag.find(item.getVodRemarks(), true);
+            if (episode == null) continue;
+            applyEpisode(item, flag, episode);
+            return;
+        }
+    }
+
+    private void applyEpisode(History item, Flag flag, Episode episode) {
+        item.copyTo(this);
+        setVodFlag(flag.getFlag());
+        setPosition(item.getPosition());
+        setEpisodeUrl(episode.getUrl());
+        setVodRemarks(episode.getName());
     }
 
     @Override

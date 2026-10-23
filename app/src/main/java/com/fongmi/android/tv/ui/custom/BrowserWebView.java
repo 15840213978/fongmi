@@ -53,12 +53,21 @@ public final class BrowserWebView extends WebView {
 
         void onDownloadError();
 
-        default void onRendererGone(@NonNull BrowserWebView view) {}
+        default void onRendererGone(@NonNull BrowserWebView view) {
+        }
 
-        default void onOpenExternal(@NonNull Uri uri) {}
+        default void onOpenExternal(@NonNull Uri uri) {
+        }
+
+        default void onFullscreenChanged(@NonNull BrowserWebView view, boolean fullscreen) {
+        }
+
+        default void onPageReady(@NonNull BrowserWebView view) {
+        }
     }
 
-    public record Download(@NonNull String fileName, @NonNull String mimeType, @NonNull byte[] data) {}
+    public record Download(@NonNull String fileName, @NonNull String mimeType, @NonNull byte[] data) {
+    }
 
     public interface PlaybackListener {
 
@@ -68,9 +77,11 @@ public final class BrowserWebView extends WebView {
 
         void onFailure(@NonNull BrowserWebView view, boolean rendererGone);
 
-        default void onFullscreenChanged(@NonNull BrowserWebView view, boolean fullscreen) {}
+        default void onFullscreenChanged(@NonNull BrowserWebView view, boolean fullscreen) {
+        }
 
-        default void onChallengeChanged(@NonNull BrowserWebView view, boolean visible) {}
+        default void onChallengeChanged(@NonNull BrowserWebView view, boolean visible) {
+        }
     }
 
     public enum PlaybackType {
@@ -92,10 +103,6 @@ public final class BrowserWebView extends WebView {
         public boolean isSeekable() {
             return type == PlaybackType.VIDEO && durationMs > 0;
         }
-
-        private boolean shouldShowContent() {
-            return type == PlaybackType.FRAME || (type == PlaybackType.VIDEO && started);
-        }
     }
 
     private static final String BLANK = "about:blank";
@@ -105,389 +112,6 @@ public final class BrowserWebView extends WebView {
     private static final long DOWNLOAD_POLL_DELAY = 50;
     private static final long DOWNLOAD_TIMEOUT = 10_000;
     private static final String DOWNLOAD_BRIDGE_NAME = "FongMiDownloads";
-    private static final String DOWNLOAD_HOOK_SCRIPT = """
-      (() => {
-          if (window.__fongmiDownloadHooked) return 'already';
-          const bridge = window[$BRIDGE];
-          if (!bridge || typeof bridge.onDownload !== 'function') return 'bridge-missing';
-          if (typeof URL.createObjectURL !== 'function' || typeof URL.revokeObjectURL !== 'function') return 'blob-api-missing';
-          window.__fongmiDownloadHooked = true;
-          const blobs = window.__fongmiDownloadBlobs = Object.create(null);
-          const createObjectURL = URL.createObjectURL.bind(URL);
-          const revokeObjectURL = URL.revokeObjectURL.bind(URL);
-          URL.createObjectURL = blob => {
-              const url = createObjectURL(blob);
-              blobs[url] = blob;
-              return url;
-          };
-          URL.revokeObjectURL = url => {
-              delete blobs[url];
-              revokeObjectURL(url);
-          };
-          const readAnchor = anchor => {
-              if (!anchor || !anchor.hasAttribute('download') || !anchor.href.startsWith('blob:')) return false;
-              const pageUrl = location.href;
-              const blobUrl = anchor.href;
-              const fileName = anchor.download || 'config.json';
-              const retained = blobs[blobUrl];
-              const source = retained ? Promise.resolve(retained) : fetch(blobUrl).then(response => response.blob());
-              source.then(blob => {
-                  if (blob.size > $LIMIT) {
-                      bridge.onError($TOKEN, pageUrl, blobUrl);
-                      return;
-                  }
-                  const reader = new FileReader();
-                  reader.onload = () => {
-                      const value = String(reader.result || '');
-                      const comma = value.indexOf(',');
-                      if (comma < 0) {
-                          bridge.onError($TOKEN, pageUrl, blobUrl);
-                          return;
-                      }
-                      bridge.onDownload($TOKEN, pageUrl, blobUrl, fileName, blob.type || '', value.slice(comma + 1));
-                  };
-                  reader.onerror = () => bridge.onError($TOKEN, pageUrl, blobUrl);
-                  reader.readAsDataURL(blob);
-              }).catch(() => bridge.onError($TOKEN, pageUrl, blobUrl));
-              return true;
-          };
-          const click = HTMLAnchorElement.prototype.click;
-          HTMLAnchorElement.prototype.click = function() {
-              if (!readAnchor(this)) click.call(this);
-          };
-          document.addEventListener('click', event => {
-              const target = event.target;
-              const anchor = target && target.closest ? target.closest('a[download]') : null;
-              if (!readAnchor(anchor)) return;
-              event.preventDefault();
-              event.stopImmediatePropagation();
-          }, true);
-          return 'installed';
-      })()
-      """;
-    private static final String DOWNLOAD_READ_SCRIPT = """
-      (() => {
-          const store = window.__fongmiDownloads || (window.__fongmiDownloads = Object.create(null));
-          const key = $KEY;
-          store[key] = {state: 'pending'};
-          const blobs = window.__fongmiDownloadBlobs;
-          const retained = blobs && blobs[$URL];
-          const source = retained ? Promise.resolve(retained) : fetch($URL).then(response => {
-              if (!response.ok) throw new Error('Download failed');
-              return response.blob();
-          });
-          source
-              .then(blob => {
-                  if (blob.size > $LIMIT) {
-                      store[key] = {state: 'error'};
-                      return;
-                  }
-                  const reader = new FileReader();
-                  reader.onload = () => {
-                      const value = String(reader.result || '');
-                      const comma = value.indexOf(',');
-                      store[key] = comma < 0
-                          ? {state: 'error'}
-                          : {state: 'done', type: blob.type || '', data: value.slice(comma + 1)};
-                  };
-                  reader.onerror = () => store[key] = {state: 'error'};
-                  reader.readAsDataURL(blob);
-              })
-              .catch(() => store[key] = {state: 'error'});
-      })()
-      """;
-    private static final String DOWNLOAD_POLL_SCRIPT = """
-      (() => {
-          const store = window.__fongmiDownloads;
-          const result = store && store[$KEY];
-          if (!result || result.state === 'pending') return null;
-          delete store[$KEY];
-          return JSON.stringify(result);
-      })()
-      """;
-    private static final String PLAYBACK_RUNTIME_SCRIPT = """
-          const runtime = window.__fongmiPlaybackRuntime || (window.__fongmiPlaybackRuntime = (() => {
-          const visibleArea = element => {
-              if (!element || !element.isConnected) return -1;
-              const rect = element.getBoundingClientRect();
-              const view = element.ownerDocument.defaultView;
-              const style = view.getComputedStyle(element);
-              const width = Math.max(0, Math.min(rect.right, view.innerWidth) - Math.max(rect.left, 0));
-              const height = Math.max(0, Math.min(rect.bottom, view.innerHeight) - Math.max(rect.top, 0));
-              return width > 0 && height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity || 1) !== 0 ? width * height : -1;
-          };
-          const effectiveArea = (element, ancestors) => {
-              let area = visibleArea(element);
-              if (area <= 0) return -1;
-              for (const ancestor of ancestors) {
-                  const ancestorArea = visibleArea(ancestor);
-                  if (ancestorArea <= 0) return -1;
-                  area = Math.min(area, ancestorArea);
-              }
-              return area;
-          };
-          const shadowHosts = element => {
-              const hosts = [];
-              let root = element && element.getRootNode ? element.getRootNode() : null;
-              while (root && root.host) {
-                  hosts.unshift(root.host);
-                  root = root.host.getRootNode ? root.host.getRootNode() : null;
-              }
-              return hosts;
-          };
-          const walkRoots = (root, visitor) => {
-              visitor(root);
-              for (const element of root.querySelectorAll('*')) {
-                  if (element.shadowRoot) walkRoots(element.shadowRoot, visitor);
-              }
-          };
-          const renderedVideos = new WeakSet();
-          const observedVideos = new WeakSet();
-          const trackedVideos = new WeakSet();
-          const observeFirstFrame = element => {
-              if (!trackedVideos.has(element)) {
-                  trackedVideos.add(element);
-                  element.addEventListener('loadstart', () => {
-                      renderedVideos.delete(element);
-                      observedVideos.delete(element);
-                  });
-              }
-              if (observedVideos.has(element)) return;
-              observedVideos.add(element);
-              const markRendered = () => {
-                  if (element.paused && element.currentTime <= 0) {
-                      observedVideos.delete(element);
-                      element.addEventListener('playing', () => observeFirstFrame(element), {once: true});
-                      return;
-                  }
-                  renderedVideos.add(element);
-              };
-              if (typeof element.requestVideoFrameCallback === 'function') element.requestVideoFrameCallback(markRendered);
-              else if (element.readyState >= 2 && element.videoWidth > 0) markRendered();
-              else element.addEventListener('loadeddata', markRendered, {once: true});
-          };
-          const stateOf = target => {
-              if (!target) return [0, false, true, false, window.innerWidth, window.innerHeight, 0, -1, false];
-              const element = target.element;
-              if (!element || !element.isConnected || (target.containers || []).some(container => !container.isConnected)) return null;
-              const rect = element.getBoundingClientRect();
-              if (target.kind === 'frame') return [2, false, false, false, Math.round(rect.width), Math.round(rect.height), 0, -1, false];
-              const playing = !element.paused && !element.ended && element.readyState >= 3;
-              const width = element.videoWidth || Math.round(rect.width);
-              const height = element.videoHeight || Math.round(rect.height);
-              const position = Number.isFinite(element.currentTime) ? Math.round(element.currentTime * 1000) : 0;
-              const duration = Number.isFinite(element.duration) ? Math.round(element.duration * 1000) : -1;
-              observeFirstFrame(element);
-              const started = renderedVideos.has(element);
-              const buffering = !element.ended && (!started || element.readyState < 2 || (!element.paused && element.readyState < 3));
-              return [1, playing, buffering, element.ended, width, height, position, duration, started];
-          };
-          return {effectiveArea, shadowHosts, walkRoots, stateOf};
-          })());
-      """;
-    private static final String ACTIVATE_SCRIPT = "(() => {" + PLAYBACK_RUNTIME_SCRIPT + """
-              const {effectiveArea, shadowHosts, walkRoots, stateOf} = runtime;
-              const observe = root => {
-                  if (!window.__fongmiPlaybackObserver || !root) return;
-                  window.__fongmiPlaybackObserver.observe(root, {childList: true, subtree: true, attributes: true, attributeFilter: ['src', 'hidden', 'class']});
-              };
-              const hasPlaybackCandidate = node => {
-                  if (!node || node.nodeType !== 1) return false;
-                  let found = false;
-                  walkRoots(node, root => {
-                      if (found) return;
-                      found = !!((root.matches && root.matches('video,iframe')) || root.querySelector('video,iframe'));
-                  });
-                  return found;
-              };
-              if (!window.__fongmiPlaybackObserver && window.MutationObserver) {
-                  window.__fongmiPlaybackDirty = true;
-                  window.__fongmiPlaybackObserver = new MutationObserver(records => {
-                      const active = window.__fongmiPlaybackTarget;
-                      if (active && (!active.element || !active.element.isConnected)) {
-                          window.__fongmiPlaybackDirty = true;
-                          return;
-                      }
-                      for (const record of records) {
-                          if (record.type === 'attributes' && hasPlaybackCandidate(record.target)) {
-                              window.__fongmiPlaybackDirty = true;
-                              return;
-                          }
-                          if (record.type !== 'childList') continue;
-                          for (const node of [...record.addedNodes, ...record.removedNodes]) {
-                              if (!hasPlaybackCandidate(node)) continue;
-                              window.__fongmiPlaybackDirty = true;
-                              return;
-                          }
-                      }
-                  });
-                  observe(document.documentElement);
-              }
-              const now = Date.now();
-              const previous = window.__fongmiPlaybackTarget || null;
-              const previousState = stateOf(previous);
-              const lastScan = window.__fongmiPlaybackScanAt || 0;
-              const stablePlayback = previous && previous.kind === 'video' && previousState && previousState[8] && !previousState[3] && (previousState[1] || previousState[2]);
-              if (!window.__fongmiPlaybackDirty && stablePlayback) return previousState;
-              if (!window.__fongmiPlaybackDirty && previousState && now - lastScan < 10000) return previousState;
-              window.__fongmiPlaybackDirty = false;
-              window.__fongmiPlaybackScanAt = now;
-              let bestVideo = null;
-              let bestVideoArea = -1;
-              let hiddenVideo = null;
-              let bestFrame = null;
-              let bestFrameScore = -1;
-              const restore = () => {
-                  for (const entry of window.__fongmiPlaybackStyled || []) {
-                      if (!entry.element || !entry.element.isConnected) continue;
-                      if (entry.style === null) entry.element.removeAttribute('style');
-                      else entry.element.setAttribute('style', entry.style);
-                  }
-                  window.__fongmiPlaybackStyled = [];
-              };
-              restore();
-              const inspectDocument = (doc, containers) => {
-                  if (!doc || !doc.documentElement) return;
-                  walkRoots(doc, root => {
-                      observe(root);
-                      for (const video of root.querySelectorAll('video')) {
-                          const ancestors = [...containers, ...shadowHosts(video)];
-                          if (!hiddenVideo) hiddenVideo = {kind: 'video', element: video, containers: [...ancestors, video]};
-                          const area = effectiveArea(video, ancestors);
-                          if (area > bestVideoArea) {
-                              bestVideo = {kind: 'video', element: video, containers: [...ancestors, video]};
-                              bestVideoArea = area;
-                          }
-                      }
-                      for (const frame of root.querySelectorAll('iframe')) {
-                          const frameAncestors = [...containers, ...shadowHosts(frame)];
-                          const frameContainers = [...frameAncestors, frame];
-                          let childDocument = null;
-                          try {
-                              childDocument = frame.contentDocument;
-                          } catch (ignored) {
-                          }
-                          if (childDocument && childDocument.documentElement) inspectDocument(childDocument, frameContainers);
-                          const area = effectiveArea(frame, frameAncestors);
-                          if (area <= 0) continue;
-                          const rect = frame.getBoundingClientRect();
-                          const ratio = rect.height > 0 ? rect.width / rect.height : 0;
-                          const attributes = `${frame.id} ${frame.className} ${frame.title} ${frame.name} ${frame.allow} ${frame.src}`.toLowerCase();
-                          const signaled = frame.allowFullscreen || /(autoplay|fullscreen|media|player|video|stream|live|embed|play)/.test(attributes);
-                          const viewport = Math.max(1, frame.ownerDocument.defaultView.innerWidth * frame.ownerDocument.defaultView.innerHeight);
-                          const plausibleRatio = ratio >= 0.45 && ratio <= 2.5;
-                          const substantial = area >= viewport * 0.45;
-                          const largeEnough = area >= viewport * 0.08;
-                          if (!plausibleRatio || !largeEnough || (!signaled && !substantial)) continue;
-                          const score = area + (signaled ? viewport : 0);
-                          if (score > bestFrameScore) {
-                              bestFrame = {kind: 'frame', element: frame, containers: frameContainers};
-                              bestFrameScore = score;
-                          }
-                      }
-                  });
-              };
-              inspectDocument(document, []);
-              const target = bestVideo || bestFrame || hiddenVideo;
-              const changed = !previous || !target || previous.kind !== target.kind || previous.element !== target.element;
-              window.__fongmiPlaybackTarget = target;
-              if (!target) return stateOf(null);
-              const styled = window.__fongmiPlaybackStyled;
-              const remember = element => {
-                  if (!styled.some(entry => entry.element === element)) styled.push({element, style: element.getAttribute('style')});
-              };
-              const isolate = element => {
-                  let current = element;
-                  while (current) {
-                      remember(current);
-                      current.style.setProperty('visibility', 'visible', 'important');
-                      current.style.setProperty('opacity', '1', 'important');
-                      const parent = current.parentElement;
-                      if (parent) {
-                          for (const sibling of parent.children) {
-                              if (sibling === current) continue;
-                              remember(sibling);
-                              sibling.style.setProperty('visibility', 'hidden', 'important');
-                              sibling.style.setProperty('opacity', '0', 'important');
-                              sibling.style.setProperty('pointer-events', 'none', 'important');
-                          }
-                          current = parent;
-                      } else {
-                          const root = current.getRootNode ? current.getRootNode() : null;
-                          current = root && root.host ? root.host : null;
-                      }
-                  }
-              };
-              const documents = new Set();
-              for (const element of target.containers) {
-                  isolate(element);
-                  remember(element);
-                  const style = element.style;
-                  style.setProperty('position', 'fixed', 'important');
-                  style.setProperty('inset', '0', 'important');
-                  style.setProperty('width', '100vw', 'important');
-                  style.setProperty('height', '100vh', 'important');
-                  style.setProperty('max-width', 'none', 'important');
-                  style.setProperty('max-height', 'none', 'important');
-                  style.setProperty('margin', '0', 'important');
-                  style.setProperty('padding', '0', 'important');
-                  style.setProperty('z-index', '2147483647', 'important');
-                  style.setProperty('background', '#000', 'important');
-                  style.setProperty('transform', 'none', 'important');
-                  if (target.kind === 'video' && element === target.element) {
-                      style.setProperty('display', 'block', 'important');
-                      style.setProperty('object-fit', 'contain', 'important');
-                  }
-                  documents.add(element.ownerDocument);
-              }
-              for (const doc of documents) {
-                  if (doc.documentElement) {
-                      remember(doc.documentElement);
-                      doc.documentElement.style.setProperty('overflow', 'hidden', 'important');
-                  }
-                  if (doc.body) {
-                      remember(doc.body);
-                      doc.body.style.setProperty('overflow', 'hidden', 'important');
-                  }
-              }
-              if (target.kind === 'video' && changed) {
-                  const promise = target.element.play();
-                  if (promise && promise.catch) promise.catch(() => {});
-              }
-              return stateOf(target);
-          })()
-          """;
-    private static final String STATE_SCRIPT = """
-      (() => {
-          const runtime = window.__fongmiPlaybackRuntime;
-          return runtime ? runtime.stateOf(window.__fongmiPlaybackTarget || null) : null;
-      })()
-      """;
-    private static final String PAUSE_SCRIPT = """
-      (() => {
-          const target = window.__fongmiPlaybackTarget;
-          if (!target || target.kind !== 'video' || !target.element.isConnected) return false;
-          target.element.pause();
-          return target.element.paused;
-      })()
-      """;
-    private static final String PLAY_SCRIPT = """
-      (() => {
-          const target = window.__fongmiPlaybackTarget;
-          if (!target || target.kind !== 'video' || !target.element.isConnected) return false;
-          const promise = target.element.play();
-          if (promise && promise.catch) promise.catch(() => {});
-          return true;
-      })()
-      """;
-    private static final String SEEK_SCRIPT = """
-      (() => {
-          const target = window.__fongmiPlaybackTarget;
-          if (!target || target.kind !== 'video' || !target.element.isConnected || !Number.isFinite(target.element.duration)) return false;
-          target.element.currentTime = %s;
-          return true;
-      })()
-      """;
     private static final long TARGET_SCAN_DELAY = 2000;
     private static final long STARTUP_SCAN_DELAY = 250;
     private static final long STARTUP_POLL_DELAY = 100;
@@ -495,10 +119,14 @@ public final class BrowserWebView extends WebView {
 
     private final Runnable targetTask = this::scanTarget;
     private final Runnable stateTask = this::pollState;
-    @Nullable private final BrowserListener browserListener;
-    @Nullable private final PlaybackListener listener;
-    @Nullable private WebChromeClient.CustomViewCallback customViewCallback;
-    @Nullable private View customView;
+    @Nullable
+    private final BrowserListener browserListener;
+    @Nullable
+    private final PlaybackListener listener;
+    @Nullable
+    private WebChromeClient.CustomViewCallback customViewCallback;
+    @Nullable
+    private View customView;
     private boolean released;
     private boolean targetReady;
     private boolean failureReported;
@@ -507,15 +135,17 @@ public final class BrowserWebView extends WebView {
     private boolean playbackActive;
     private boolean awaitingPlaybackStart;
     private boolean videoPlaying;
-    private boolean contentRevealed;
-    @Nullable private PlaybackState playbackState;
+    @Nullable
+    private PlaybackState playbackState;
     private final String downloadBridgeToken = UUID.randomUUID().toString();
     private int loadGeneration;
     private int pageGeneration;
     private String clickScript;
     private String defaultUserAgent;
-    @Nullable private String previousPlaybackUrl;
-    @Nullable private String requestedPlaybackUrl;
+    @Nullable
+    private String previousPlaybackUrl;
+    @Nullable
+    private String requestedPlaybackUrl;
     private int downloadGeneration;
 
     public static BrowserWebView createBrowser(@NonNull Context context, String url, @NonNull BrowserListener listener) {
@@ -558,7 +188,6 @@ public final class BrowserWebView extends WebView {
         CookieManager manager = CookieManager.getInstance();
         manager.setAcceptCookie(true);
         manager.setAcceptThirdPartyCookies(this, true);
-        setBackgroundColor(Color.BLACK);
         setWebChromeClient(new ChromeClient());
         setWebViewClient(Build.VERSION.SDK_INT >= Build.VERSION_CODES.O ? new OreoClient() : new Client());
         if (browserListener != null) {
@@ -607,27 +236,27 @@ public final class BrowserWebView extends WebView {
         int load = loadGeneration;
         int page = pageGeneration;
         if (!isCurrentPlayback(load, page) || playbackPaused) return;
-        evaluateJavascript(ACTIVATE_SCRIPT, value -> {
-            if (!isCurrentPlayback(load, page) || playbackPaused) return;
-            PlaybackState state = parseState(value);
-            targetReady = state != null;
-            if (state != null) {
-                if (state.type() != PlaybackType.PAGE) reportChallenge(false);
-                reportState(state);
-                if (state.type() == PlaybackType.VIDEO && !state.ended()) {
-                    scheduleStatePoll(state);
-                }
-            }
-            removeCallbacks(targetTask);
-            postDelayed(targetTask, state != null && state.type() != PlaybackType.PAGE ? TARGET_SCAN_DELAY : STARTUP_SCAN_DELAY);
-        });
+        evaluateJavascript(BrowserScripts.ACTIVATE, value -> onTargetScanned(load, page, value));
+    }
+
+    private void onTargetScanned(int load, int page, String value) {
+        if (!isCurrentPlayback(load, page) || playbackPaused) return;
+        PlaybackState state = parseState(value);
+        targetReady = state != null;
+        if (state != null) {
+            if (state.type() != PlaybackType.PAGE) reportChallenge(false);
+            reportState(state);
+            if (state.type() == PlaybackType.VIDEO && !state.ended()) scheduleStatePoll(state);
+        }
+        removeCallbacks(targetTask);
+        postDelayed(targetTask, state != null && state.type() != PlaybackType.PAGE ? TARGET_SCAN_DELAY : STARTUP_SCAN_DELAY);
     }
 
     public void pauseVideo() {
         if (released || !playbackActive) return;
         playbackPaused = true;
         cancelPlaybackTasks();
-        evaluateJavascript(PAUSE_SCRIPT, null);
+        evaluateJavascript(BrowserScripts.PAUSE, null);
         reportPlaying(false);
     }
 
@@ -635,10 +264,7 @@ public final class BrowserWebView extends WebView {
         if (released || !playbackActive) return;
         hideCustomView();
         setVisibility(View.INVISIBLE);
-        playbackActive = false;
-        awaitingPlaybackStart = false;
-        previousPlaybackUrl = null;
-        requestedPlaybackUrl = null;
+        clearPlaybackRequest();
         loadGeneration++;
         pageGeneration++;
         reportChallenge(false);
@@ -652,7 +278,7 @@ public final class BrowserWebView extends WebView {
         if (released || !playbackActive || failureReported) return;
         playbackPaused = false;
         cancelPlaybackTasks();
-        evaluateJavascript(PLAY_SCRIPT, null);
+        evaluateJavascript(BrowserScripts.PLAY, null);
         post(targetTask);
     }
 
@@ -660,7 +286,7 @@ public final class BrowserWebView extends WebView {
         PlaybackState state = playbackState;
         if (released || !playbackActive || state == null || !state.isSeekable()) return;
         long targetMs = Math.max(0, Math.min(positionMs, state.durationMs()));
-        evaluateJavascript(SEEK_SCRIPT.replace("%s", Double.toString(targetMs / 1000.0)), null);
+        evaluateJavascript(BrowserScripts.SEEK.replace("%s", Double.toString(targetMs / 1000.0)), null);
     }
 
     public boolean isVideoPlaying() {
@@ -714,6 +340,7 @@ public final class BrowserWebView extends WebView {
         setVisibility(View.VISIBLE);
         if (callback != null) callback.onCustomViewHidden();
         if (listener != null) listener.onFullscreenChanged(this, false);
+        if (browserListener != null) browserListener.onFullscreenChanged(this, false);
         requestFocus();
         return true;
     }
@@ -728,6 +355,7 @@ public final class BrowserWebView extends WebView {
         customView = view;
         customViewCallback = callback;
         if (listener != null) listener.onFullscreenChanged(this, true);
+        if (browserListener != null) browserListener.onFullscreenChanged(this, true);
         int index = Math.max(0, parent.indexOfChild(this) + 1);
         parent.addView(view, index, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         view.setBackgroundColor(Color.BLACK);
@@ -761,6 +389,13 @@ public final class BrowserWebView extends WebView {
         return listener != null;
     }
 
+    private void clearPlaybackRequest() {
+        playbackActive = false;
+        awaitingPlaybackStart = false;
+        previousPlaybackUrl = null;
+        requestedPlaybackUrl = null;
+    }
+
     private void cancelPlaybackTasks() {
         removeCallbacks(targetTask);
         removeCallbacks(stateTask);
@@ -768,7 +403,6 @@ public final class BrowserWebView extends WebView {
 
     private void resetPlaybackState() {
         targetReady = false;
-        contentRevealed = false;
         playbackState = null;
         cancelPlaybackTasks();
         reportPlaying(false);
@@ -787,18 +421,20 @@ public final class BrowserWebView extends WebView {
         int load = loadGeneration;
         int page = pageGeneration;
         if (!isCurrentPlayback(load, page) || playbackPaused || !targetReady) return;
-        evaluateJavascript(STATE_SCRIPT, value -> {
-            if (!isCurrentPlayback(load, page) || playbackPaused) return;
-            PlaybackState state = parseState(value);
-            if (state == null) {
-                targetReady = false;
-                removeCallbacks(targetTask);
-                post(targetTask);
-                return;
-            }
-            reportState(state);
-            if (state.type() == PlaybackType.VIDEO && !state.ended()) scheduleStatePoll(state);
-        });
+        evaluateJavascript(BrowserScripts.STATE, value -> onStatePolled(load, page, value));
+    }
+
+    private void onStatePolled(int load, int page, String value) {
+        if (!isCurrentPlayback(load, page) || playbackPaused) return;
+        PlaybackState state = parseState(value);
+        if (state == null) {
+            targetReady = false;
+            removeCallbacks(targetTask);
+            post(targetTask);
+            return;
+        }
+        reportState(state);
+        if (state.type() == PlaybackType.VIDEO && !state.ended()) scheduleStatePoll(state);
     }
 
     private void scheduleStatePoll(@NonNull PlaybackState state) {
@@ -816,14 +452,10 @@ public final class BrowserWebView extends WebView {
     }
 
     private void reportState(@NonNull PlaybackState state) {
-        if (!challengeVisible) {
-            if (state.shouldShowContent()) contentRevealed = true;
-            setAlpha(contentRevealed ? 1f : 0f);
-        }
-        reportPlaying(state.playing());
-        if (state.equals(playbackState)) return;
+        boolean changed = !state.equals(playbackState);
         playbackState = state;
-        if (listener != null) listener.onStateChanged(this, state);
+        reportPlaying(state.playing());
+        if (changed && listener != null) listener.onStateChanged(this, state);
     }
 
     private void reportPlaying(boolean isPlaying) {
@@ -835,10 +467,7 @@ public final class BrowserWebView extends WebView {
     private void reportFailure(int generation, boolean rendererGone) {
         if (!isCurrentLoad(generation)) return;
         failureReported = true;
-        playbackActive = false;
-        awaitingPlaybackStart = false;
-        previousPlaybackUrl = null;
-        requestedPlaybackUrl = null;
+        clearPlaybackRequest();
         cancelPlaybackTasks();
         reportPlaying(false);
         if (rendererGone) released = true;
@@ -861,14 +490,14 @@ public final class BrowserWebView extends WebView {
             return;
         }
         String key = Integer.toString(generation);
-        String script = DOWNLOAD_READ_SCRIPT.replace("$KEY", JSONObject.quote(key)).replace("$URL", JSONObject.quote(url)).replace("$LIMIT", Integer.toString(MAX_DOWNLOAD_BYTES));
+        String script = BrowserScripts.DOWNLOAD_READ.replace("$KEY", JSONObject.quote(key)).replace("$URL", JSONObject.quote(url)).replace("$LIMIT", Integer.toString(MAX_DOWNLOAD_BYTES));
         String fileName = sanitizeFileName(URLUtil.guessFileName(url, contentDisposition, mimeType));
         long deadline = SystemClock.uptimeMillis() + DOWNLOAD_TIMEOUT;
         evaluateJavascript(script, value -> pollDownload(generation, key, fileName, mimeType, deadline));
     }
 
     private void installDownloadHook() {
-        String script = DOWNLOAD_HOOK_SCRIPT.replace("$BRIDGE", JSONObject.quote(DOWNLOAD_BRIDGE_NAME)).replace("$TOKEN", JSONObject.quote(downloadBridgeToken)).replace("$LIMIT", Integer.toString(MAX_DOWNLOAD_BYTES));
+        String script = BrowserScripts.DOWNLOAD_HOOK.replace("$BRIDGE", JSONObject.quote(DOWNLOAD_BRIDGE_NAME)).replace("$TOKEN", JSONObject.quote(downloadBridgeToken)).replace("$LIMIT", Integer.toString(MAX_DOWNLOAD_BYTES));
         evaluateJavascript(script, null);
     }
 
@@ -900,19 +529,18 @@ public final class BrowserWebView extends WebView {
 
     private void pollDownload(int generation, String key, String fileName, String mimeType, long deadline) {
         if (released || generation != downloadGeneration || browserListener == null) return;
-        String script = DOWNLOAD_POLL_SCRIPT.replace("$KEY", JSONObject.quote(key));
-        evaluateJavascript(script, value -> {
-            if (released || generation != downloadGeneration || browserListener == null) return;
-            if (value == null || "null".equals(value)) {
-                if (SystemClock.uptimeMillis() >= deadline) {
-                    reportDownloadError(generation, key, "native-timeout");
-                } else {
-                    postDelayed(() -> pollDownload(generation, key, fileName, mimeType, deadline), DOWNLOAD_POLL_DELAY);
-                }
-                return;
-            }
-            completeDownload(generation, key, fileName, mimeType, value);
-        });
+        String script = BrowserScripts.DOWNLOAD_POLL.replace("$KEY", JSONObject.quote(key));
+        evaluateJavascript(script, value -> onDownloadPolled(generation, key, fileName, mimeType, deadline, value));
+    }
+
+    private void onDownloadPolled(int generation, String key, String fileName, String mimeType, long deadline, String value) {
+        if (released || generation != downloadGeneration || browserListener == null) return;
+        if (value == null || "null".equals(value)) {
+            if (SystemClock.uptimeMillis() >= deadline) reportDownloadError(generation, key, "native-timeout");
+            else postDelayed(() -> pollDownload(generation, key, fileName, mimeType, deadline), DOWNLOAD_POLL_DELAY);
+            return;
+        }
+        completeDownload(generation, key, fileName, mimeType, value);
     }
 
     private void completeDownload(int generation, String key, String fileName, String reportedMimeType, String value) {
@@ -978,16 +606,13 @@ public final class BrowserWebView extends WebView {
 
     private static boolean isSameHttpOrigin(@NonNull Uri first, @NonNull Uri second) {
         if (!isHttpScheme(first.getScheme()) || !isHttpScheme(second.getScheme())) return false;
-        return first.getScheme().equalsIgnoreCase(second.getScheme()) && equalsIgnoreCase(first.getHost(), second.getHost()) && effectivePort(first) == effectivePort(second);
+        String host = first.getHost();
+        return first.getScheme().equalsIgnoreCase(second.getScheme()) && host != null && host.equalsIgnoreCase(second.getHost()) && effectivePort(first) == effectivePort(second);
     }
 
     private static int effectivePort(@NonNull Uri uri) {
         if (uri.getPort() != -1) return uri.getPort();
         return "https".equalsIgnoreCase(uri.getScheme()) ? 443 : 80;
-    }
-
-    private static boolean equalsIgnoreCase(@Nullable String first, @Nullable String second) {
-        return first != null && second != null && first.equalsIgnoreCase(second);
     }
 
     @Nullable
@@ -1012,10 +637,7 @@ public final class BrowserWebView extends WebView {
         if (released) return;
         hideCustomView();
         reportChallenge(false);
-        playbackActive = false;
-        awaitingPlaybackStart = false;
-        previousPlaybackUrl = null;
-        requestedPlaybackUrl = null;
+        clearPlaybackRequest();
         released = true;
         downloadGeneration++;
         cancelPlaybackTasks();
@@ -1109,6 +731,14 @@ public final class BrowserWebView extends WebView {
             if (browserListener != null) installDownloadHook();
             int load = loadGeneration;
             int page = pageGeneration;
+            if (browserListener != null) {
+                postVisualStateCallback(page, new VisualStateCallback() {
+                    @Override
+                    public void onComplete(long requestId) {
+                        if (isCurrentPage(load, page, url)) browserListener.onPageReady(BrowserWebView.this);
+                    }
+                });
+            }
             evaluateJavascript(WebViewCloudflare.CHECK_SCRIPT, value -> onChallengeChecked(url, load, page, value));
         }
 
@@ -1121,7 +751,7 @@ public final class BrowserWebView extends WebView {
             reportChallenge(false);
             WebViewRules.apply(BrowserWebView.this, Uri.parse(url), clickScript, () -> isCurrentPage(load, page, url));
             if (!isPlayback()) return;
-            setAlpha(0f);
+            setAlpha(1f);
             if (playbackPaused) return;
             removeCallbacks(targetTask);
             post(targetTask);

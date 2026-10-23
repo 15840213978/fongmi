@@ -42,7 +42,6 @@ public final class TapSeekFeedback extends LinearLayout {
     private final Runnable hide;
     private int direction;
     private int count;
-    private int generation;
 
     public TapSeekFeedback(FrameLayout video, Runnable onHidden) {
         super(video.getContext());
@@ -54,14 +53,15 @@ public final class TapSeekFeedback extends LinearLayout {
         this.secondArrow = createArrow();
         this.hideFirstArrow = () -> firstArrow.setVisibility(View.GONE);
         this.hideSecondArrow = () -> secondArrow.setVisibility(View.GONE);
-        this.hide = () -> {
-            int currentGeneration = generation;
-            animate().alpha(0f).setDuration(FADE_DURATION_MS).withEndAction(() -> {
-                if (generation != currentGeneration) return;
-                setVisibility(View.GONE);
-                onHidden.run();
-            }).start();
-        };
+        this.hide = this::hideFeedback;
+        initView();
+        initText();
+        initArrows();
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER_VERTICAL);
+        video.addView(this, params);
+    }
+
+    private void initView() {
         setOrientation(HORIZONTAL);
         setGravity(Gravity.CENTER);
         setFocusable(false);
@@ -69,6 +69,9 @@ public final class TapSeekFeedback extends LinearLayout {
         setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
         setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
         setVisibility(View.GONE);
+    }
+
+    private void initText() {
         secondsView.setTextColor(ContextCompat.getColor(getContext(), R.color.white));
         secondsView.setTextSize(18);
         secondsView.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
@@ -78,14 +81,22 @@ public final class TapSeekFeedback extends LinearLayout {
         int shadowPadding = shadowRadius + shadowOffset;
         secondsView.setPadding(shadowPadding, shadowPadding, shadowPadding, shadowPadding);
         secondsView.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+    }
+
+    private void initArrows() {
         int arrowSize = ResUtil.dp2px(ARROW_SIZE_DP);
         FrameLayout.LayoutParams arrowParams = new FrameLayout.LayoutParams(arrowSize, arrowSize, Gravity.CENTER);
         arrows.addView(firstArrow, arrowParams);
         arrows.addView(secondArrow, new FrameLayout.LayoutParams(arrowSize, arrowSize, Gravity.CENTER));
         firstArrow.setVisibility(View.GONE);
         secondArrow.setVisibility(View.GONE);
-        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER_VERTICAL);
-        video.addView(this, params);
+    }
+
+    private void hideFeedback() {
+        animate().alpha(0f).setDuration(FADE_DURATION_MS).withEndAction(() -> {
+            setVisibility(View.GONE);
+            onHidden.run();
+        }).start();
     }
 
     private AppCompatImageView createArrow() {
@@ -106,7 +117,6 @@ public final class TapSeekFeedback extends LinearLayout {
         boolean entering = direction != nextDirection || getVisibility() != View.VISIBLE;
         if (entering) count = 0;
         count++;
-        generation++;
         removeCallbacks(hide);
         animate().cancel();
         if (entering) resetArrows();
@@ -177,7 +187,6 @@ public final class TapSeekFeedback extends LinearLayout {
     }
 
     public void clear() {
-        generation++;
         removeCallbacks(hide);
         animate().cancel();
         resetArrows();

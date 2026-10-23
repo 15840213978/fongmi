@@ -57,6 +57,10 @@ final class NodePlayback {
             if (title.isEmpty()) title = host.getVodName();
             if (episodeName.isEmpty()) episodeName = host.getVodMark();
         }
+        return serializePlayInfo(current, pending, title, episodeName);
+    }
+
+    private String serializePlayInfo(PlaybackSnapshot current, PlayInfo pending, String title, String episodeName) {
         String url = current.url();
         String fileName = pending.fileName().isEmpty() ? fileName(url) : pending.fileName();
         JsonObject result = new JsonObject();
@@ -126,5 +130,4 @@ final class NodePlayback {
             return new PlayInfo("", "", "", "", "");
         }
     }
-
 }

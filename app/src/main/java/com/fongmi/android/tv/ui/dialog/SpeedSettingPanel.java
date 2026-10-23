@@ -33,7 +33,7 @@ final class SpeedSettingPanel {
         bindSpeed();
         bindLongPressSpeed();
         for (int i = 0; i < presetViews.length; i++) bindPreset(presetViews[i], i);
-        binding.reset.setOnClickListener(view -> resetAll());
+        binding.reset.setOnClickListener(this::onReset);
         syncControls();
         updateLongPressSpeedNextFocus();
         PlaybackDialogFocus.request(binding.getRoot(), binding.speed.slider);
@@ -43,6 +43,7 @@ final class SpeedSettingPanel {
         ViewSettingSliderBinding item = binding.speed;
         Slider slider = item.slider;
         item.title.setText(R.string.speed_setting_current);
+        slider.setContentDescription(item.title.getText());
         slider.clearOnChangeListeners();
         SpeedSetting.setup(slider);
         slider.addOnChangeListener((source, value, fromUser) -> {
@@ -55,12 +56,17 @@ final class SpeedSettingPanel {
         ViewSettingSliderBinding item = binding.longPressSpeed;
         Slider slider = item.slider;
         item.title.setText(R.string.speed_setting_long_press);
+        slider.setContentDescription(item.title.getText());
         slider.clearOnChangeListeners();
         SpeedSetting.setupLongPress(slider);
         slider.addOnChangeListener((source, value, fromUser) -> {
             if (!fromUser) return;
             setLongPressSpeed(value);
         });
+    }
+
+    private void onReset(View view) {
+        resetAll();
     }
 
     private void resetAll() {
@@ -71,9 +77,6 @@ final class SpeedSettingPanel {
     }
 
     private void bindPreset(TextView view, int index) {
-        boolean visible = index < presets.length;
-        view.setVisibility(visible ? View.VISIBLE : View.GONE);
-        if (!visible) return;
         float speed = presets[index];
         view.setText(SpeedSetting.formatValue(speed));
         view.setOnClickListener(v -> setSpeedAndSync(speed));
@@ -128,12 +131,8 @@ final class SpeedSettingPanel {
 
     private void updateLongPressSpeedNextFocus() {
         if (!Util.isLeanback()) return;
-        int count = Math.min(presets.length, presetViews.length);
-        if (count == 0) return;
         int nearest = 0;
-        for (int i = 1; i < count; i++) {
-            if (Math.abs(presets[i] - speed) < Math.abs(presets[nearest] - speed)) nearest = i;
-        }
+        for (int i = 1; i < presets.length; i++) if (Math.abs(presets[i] - speed) < Math.abs(presets[nearest] - speed)) nearest = i;
         binding.longPressSpeed.slider.setNextFocusDownId(presetViews[nearest].getId());
     }
 

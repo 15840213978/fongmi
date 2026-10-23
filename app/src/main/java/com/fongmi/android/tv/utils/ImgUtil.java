@@ -90,7 +90,13 @@ public class ImgUtil {
         if (TextUtils.isEmpty(url) || failed.contains(url)) {
             Glide.with(view).clear(view);
             view.setImageDrawable(getTextDrawable(text, vod));
-        } else try {
+            return;
+        }
+        loadImage(text, url, view, vod);
+    }
+
+    private static void loadImage(String text, String url, ImageView view, boolean vod) {
+        try {
             RequestBuilder<Drawable> builder = Glide.with(view).load(getUrl(url)).listener(getListener(text, url, view, vod));
             if (vod) builder.centerCrop().into(view);
             else builder.fitCenter().into(view);

@@ -50,16 +50,22 @@ public class OkProxySelector extends ProxySelector {
     @Override
     public List<java.net.Proxy> select(URI uri) {
         if (proxy.isEmpty() || uri.getHost() == null || "127.0.0.1".equals(uri.getHost())) return fallback(uri);
-        Proxy item = find(uri);
-        if (item != null) return !item.getProxies().isEmpty() ? item.getProxies() : fallback(uri);
-        return fallback(uri);
+        return getProxies(uri, find(uri));
     }
 
     Policy policy(URI uri, Policy previous) {
         Proxy item = find(uri);
-        if (item == null && previous != null && previous.rule != null && previous.generation == generation && proxy.contains(previous.rule) && !previous.rule.getProxies().isEmpty() && uri.getHost() != null && !"127.0.0.1".equals(uri.getHost())) item = previous.rule;
-        List<java.net.Proxy> proxies = item != null && !item.getProxies().isEmpty() ? item.getProxies() : fallback(uri);
+        if (item == null && canInherit(uri, previous)) item = previous.rule;
+        List<java.net.Proxy> proxies = getProxies(uri, item);
         return new Policy(uri, item, proxies, system, generation);
+    }
+
+    private boolean canInherit(URI uri, Policy previous) {
+        return previous != null && previous.rule != null && previous.generation == generation && proxy.contains(previous.rule) && !previous.rule.getProxies().isEmpty() && uri.getHost() != null && !"127.0.0.1".equals(uri.getHost());
+    }
+
+    private List<java.net.Proxy> getProxies(URI uri, Proxy item) {
+        return item != null && !item.getProxies().isEmpty() ? item.getProxies() : fallback(uri);
     }
 
     Proxy find(URI uri) {

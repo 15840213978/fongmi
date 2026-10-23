@@ -21,7 +21,6 @@ public class CustomHorizontalScrollView extends HorizontalScrollView {
                 default -> NO_ID;
             };
             View next = getRootView().findViewById(id);
-            // Explicit focus links may wrap to a control outside the visible scroll range.
             if (next != null && next.isShown() && next.isEnabled() && next.requestFocus(direction)) return true;
         }
         return super.arrowScroll(direction);

@@ -16,6 +16,7 @@ import com.fongmi.android.tv.gson.SkipAdapter;
 import com.fongmi.android.tv.gson.UrlAdapter;
 import com.fongmi.android.tv.setting.DanmakuSetting;
 import com.fongmi.android.tv.utils.Util;
+import com.github.catvod.utils.Auth;
 import com.github.catvod.utils.Trans;
 import com.google.gson.annotations.JsonAdapter;
 import com.google.gson.annotations.SerializedName;
@@ -59,9 +60,14 @@ public class Result implements Parcelable {
     @JsonAdapter(HeaderAdapter.class)
     private Map<String, String> header;
 
+    private transient Auth.Context auth;
+
     @SerializedName("msg")
     @JsonAdapter(MsgAdapter.class)
     private String msg;
+
+    @SerializedName("web")
+    private Web web;
 
     @SerializedName("danmaku")
     @JsonAdapter(DanmakuAdapter.class)
@@ -203,6 +209,12 @@ public class Result implements Parcelable {
         this.url = getUrl().replace(url);
     }
 
+    public synchronized Web takeWeb() {
+        Web value = web;
+        web = null;
+        return value;
+    }
+
     public String getMsg() {
         return TextUtils.isEmpty(msg) || getCode() != 0 ? "" : msg;
     }
@@ -232,6 +244,14 @@ public class Result implements Parcelable {
 
     public Map<String, String> getHeader() {
         return header == null ? new HashMap<>() : header;
+    }
+
+    public Auth.Context getAuth() {
+        return auth;
+    }
+
+    public void setAuth(Auth.Context auth) {
+        this.auth = auth;
     }
 
     public void setHeader(Map<String, String> header) {

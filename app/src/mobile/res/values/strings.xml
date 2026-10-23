@@ -10,6 +10,7 @@
     <string name="nav_setting">Setting</string>
 
     <!-- Menu -->
+    <string name="home_push">Connect</string>
     <string name="menu_sync">Sync</string>
     <string name="menu_delete">Delete</string>
     <string name="menu_search">Search</string>
@@ -34,7 +35,10 @@
     <!-- Control -->
     <string name="seek_seconds">%+d s</string>
     <string name="control_speed">Speed</string>
-    <string name="control_scale">Scale</string>
+    <string name="pinch_zoom">Zoom %1$d%%</string>
+    <string name="pinch_width">Width %1$d%%</string>
+    <string name="pinch_height">Height %1$d%%</string>
+    <string name="pinch_size">W %1$d%% · H %2$d%%</string>
     <string name="control_track">Track</string>
     <string name="control_other">Other</string>
 
@@ -60,7 +64,6 @@
         <item>PiP</item>
     </string-array>
 
-
     <string name="dialog_action_choose_file">Choose file</string>
     <string name="dialog_action_delete_config">Delete configuration record</string>
     <string name="dialog_action_delete_backup">Delete backup</string>
@@ -76,4 +79,5 @@
     <string name="dialog_action_sync_download">Sync mode: download</string>
 
     <string name="subtitle_search_api_title">Assrt</string>
+
 </resources>

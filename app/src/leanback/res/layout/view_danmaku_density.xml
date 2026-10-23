@@ -30,6 +30,7 @@
 
     <com.google.android.material.slider.Slider
         android:id="@+id/maxOnScreenSlider"
+        android:contentDescription="@string/danmaku_max_on_screen"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginHorizontal="12dp"
@@ -66,6 +67,7 @@
 
     <com.google.android.material.slider.Slider
         android:id="@+id/scrollAreaSlider"
+        android:contentDescription="@string/danmaku_scroll_area_ratio"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginHorizontal="12dp"
@@ -102,6 +104,7 @@
 
     <com.google.android.material.slider.Slider
         android:id="@+id/scrollGapSlider"
+        android:contentDescription="@string/danmaku_scroll_gap_ratio"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginHorizontal="12dp"
@@ -138,6 +141,7 @@
 
     <com.google.android.material.slider.Slider
         android:id="@+id/lineSpacingSlider"
+        android:contentDescription="@string/danmaku_line_spacing"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginHorizontal="12dp"
@@ -175,6 +179,7 @@
 
     <com.google.android.material.slider.Slider
         android:id="@+id/maxScrollLinesSlider"
+        android:contentDescription="@string/danmaku_max_scroll_lines"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginHorizontal="12dp"
@@ -212,6 +217,7 @@
 
     <com.google.android.material.slider.Slider
         android:id="@+id/maxTopLinesSlider"
+        android:contentDescription="@string/danmaku_max_top_lines"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginHorizontal="12dp"
@@ -249,6 +255,7 @@
 
     <com.google.android.material.slider.Slider
         android:id="@+id/maxBottomLinesSlider"
+        android:contentDescription="@string/danmaku_max_bottom_lines"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginHorizontal="12dp"

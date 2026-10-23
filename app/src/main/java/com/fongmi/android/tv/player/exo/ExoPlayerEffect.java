@@ -1,6 +1,7 @@
 package com.fongmi.android.tv.player.exo;
 
 import androidx.media3.common.Format;
+import androidx.media3.common.audio.AudioEffectParameters;
 import androidx.media3.common.audio.AudioProcessor;
 import androidx.media3.exoplayer.ExoPlayer;
 
@@ -12,6 +13,8 @@ import com.fongmi.android.tv.player.effect.audio.ExoAudioEffectController;
 import com.fongmi.android.tv.player.effect.video.ExoVideoEffectController;
 import com.fongmi.android.tv.player.effect.video.VideoEffectProfile;
 import com.fongmi.android.tv.setting.VideoSetting;
+
+import java.util.List;
 
 public final class ExoPlayerEffect implements PlayerEffect {
 
@@ -34,6 +37,7 @@ public final class ExoPlayerEffect implements PlayerEffect {
 
     public void setPlayer(ExoPlayer player) {
         this.player = player;
+        player.setVideoEffects(List.of());
     }
 
     public void release() {
@@ -58,7 +62,7 @@ public final class ExoPlayerEffect implements PlayerEffect {
 
     @Override
     public void applyVideoEffect() {
-        if (supportsVideoEffect() && (previewVideoEffect || VideoSetting.isEnabled())) videoEffectController.apply(player, getVideoProfile());
+        if (supportsVideoEffect()) videoEffectController.apply(player, getVideoProfile());
         else videoEffectController.clear(player);
     }
 
@@ -121,8 +125,8 @@ public final class ExoPlayerEffect implements PlayerEffect {
         return previewVideoEffect ? VideoEffectProfile.off() : VideoSetting.getAppliedProfile();
     }
 
-    private AudioEffectConfig getAudioConfig(int channelCount) {
-        return previewAudioEffect ? AudioEffectConfig.disabled() : AudioEffectConfig.from(getAudioEffectBands(), channelCount);
+    private AudioEffectParameters getAudioConfig(int channelCount) {
+        return previewAudioEffect ? AudioEffectParameters.DEFAULT : AudioEffectConfig.from(getAudioEffectBands(), channelCount);
     }
 
     private int getAudioChannelCount() {
@@ -132,7 +136,7 @@ public final class ExoPlayerEffect implements PlayerEffect {
 
     private void applyAudioConfig(int channelCount) {
         if (channelCount == Format.NO_VALUE) return;
-        AudioEffectConfig config = getAudioConfig(channelCount);
+        AudioEffectParameters config = getAudioConfig(channelCount);
         audioEffectFailed = !audioEffectController.apply(player, config);
     }
 }

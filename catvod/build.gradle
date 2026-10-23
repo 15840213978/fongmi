@@ -33,6 +33,8 @@ dependencies {
     api libs.smbj
     api libs.startup
     api libs.zxing.core
+    testImplementation libs.okhttp.mockwebserver
+    testImplementation libs.okhttp.tls
     coreLibraryDesugaring libs.desugar
     testImplementation libs.junit
 }

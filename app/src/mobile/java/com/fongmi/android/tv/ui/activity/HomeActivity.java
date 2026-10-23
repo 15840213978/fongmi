@@ -14,6 +14,7 @@ import androidx.core.content.pm.ShortcutInfoCompat;
 import androidx.core.content.pm.ShortcutManagerCompat;
 import androidx.core.graphics.drawable.IconCompat;
 import androidx.core.splashscreen.SplashScreen;
+import androidx.fragment.app.Fragment;
 import androidx.viewbinding.ViewBinding;
 
 import com.fongmi.android.tv.App;
@@ -22,6 +23,7 @@ import com.fongmi.android.tv.Updater;
 import com.fongmi.android.tv.api.config.LiveConfig;
 import com.fongmi.android.tv.api.config.VodConfig;
 import com.fongmi.android.tv.api.config.WallConfig;
+import com.fongmi.android.tv.api.node.NodeRuntime;
 import com.fongmi.android.tv.bean.Config;
 import com.fongmi.android.tv.databinding.ActivityHomeBinding;
 import com.fongmi.android.tv.db.BackupManager;
@@ -37,6 +39,7 @@ import com.fongmi.android.tv.server.Server;
 import com.fongmi.android.tv.service.PlaybackService;
 import com.fongmi.android.tv.ui.base.BaseActivity;
 import com.fongmi.android.tv.ui.custom.FragmentStateManager;
+import com.fongmi.android.tv.ui.fragment.ModuleFragment;
 import com.fongmi.android.tv.ui.fragment.SettingDanmakuFragment;
 import com.fongmi.android.tv.ui.fragment.SettingDecodeFragment;
 import com.fongmi.android.tv.ui.fragment.SettingFragment;
@@ -55,7 +58,11 @@ import org.greenrobot.eventbus.ThreadMode;
 public class HomeActivity extends BaseActivity implements NavigationBarView.OnItemSelectedListener {
 
     private static final String STATE_ACTION_HANDLED = "action_handled";
-    private static int instanceCount;
+    private static volatile int instanceCount;
+
+    public static boolean isRunning() {
+        return instanceCount > 0;
+    }
 
     private FragmentStateManager mManager;
     private ActivityHomeBinding mBinding;
@@ -96,10 +103,9 @@ public class HomeActivity extends BaseActivity implements NavigationBarView.OnIt
         if (savedInstanceState == null || !savedInstanceState.getBoolean(STATE_ACTION_HANDLED)) pendingAction = getIntent();
         orientation = getResources().getConfiguration().orientation;
         mBinding.navigation.setOnItemSelectedListener(this);
-        PermissionUtil.requestNotify(this);
         initFragment(savedInstanceState);
-        Updater.create().start(this);
-        initConfig();
+        Updater.get().start(this, false);
+        checkPermission();
     }
 
     @Override
@@ -129,16 +135,30 @@ public class HomeActivity extends BaseActivity implements NavigationBarView.OnIt
     }
 
     private void initFragment(Bundle savedInstanceState) {
-        mManager = new FragmentStateManager(mBinding.container, getSupportFragmentManager(), position -> switch (position) {
+        mManager = new FragmentStateManager(mBinding.container, getSupportFragmentManager(), this::createFragment);
+        if (savedInstanceState == null) change(0);
+    }
+
+    private Fragment createFragment(int position) {
+        return switch (position) {
             case 0 -> VodFragment.newInstance();
             case 1 -> SettingFragment.newInstance();
             case 2 -> SettingPlayerFragment.newInstance();
             case 3 -> SettingDanmakuFragment.newInstance();
             case 4 -> SettingPreloadFragment.newInstance();
             case 5 -> SettingDecodeFragment.newInstance();
+            case 6 -> ModuleFragment.newInstance();
             default -> null;
-        });
-        if (savedInstanceState == null) change(0);
+        };
+    }
+
+    private void checkPermission() {
+        PermissionUtil.requestLocalNetwork(this, this::onNetworkPermissionResult);
+    }
+
+    private void onNetworkPermissionResult(boolean allGranted) {
+        PermissionUtil.requestNotify(this);
+        initConfig();
     }
 
     private void initConfig() {
@@ -262,7 +282,7 @@ public class HomeActivity extends BaseActivity implements NavigationBarView.OnIt
             setNavigation();
         } else if (mManager.isVisible(4) || mManager.isVisible(5)) {
             change(2);
-        } else if (mManager.isVisible(3) || mManager.isVisible(2)) {
+        } else if (mManager.isVisible(3) || mManager.isVisible(2) || mManager.isVisible(6)) {
             change(1);
         } else if (mManager.isVisible(1)) {
             change(0);
@@ -275,13 +295,19 @@ public class HomeActivity extends BaseActivity implements NavigationBarView.OnIt
     @Override
     protected void onDestroy() {
         if (--instanceCount == 0) {
-            LiveConfig.get().clear();
-            VodConfig.get().clear();
             BackupManager.backup();
-            OkHttp.get().clear();
-            Source.get().exit();
-            Server.get().stop();
+            releaseResources();
         }
         super.onDestroy();
+    }
+
+    public static void releaseResources() {
+        if (isRunning() || PlaybackService.isRunning()) return;
+        LiveConfig.get().clear();
+        VodConfig.get().clear();
+        OkHttp.get().clear();
+        Source.get().exit();
+        Server.get().stop();
+        NodeRuntime.get().releaseIfUnused();
     }
 }

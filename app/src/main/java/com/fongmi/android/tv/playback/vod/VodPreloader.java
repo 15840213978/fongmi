@@ -1,5 +1,7 @@
 package com.fongmi.android.tv.playback.vod;
 
+import android.os.SystemClock;
+
 import androidx.annotation.Nullable;
 import androidx.media3.common.C;
 import androidx.media3.common.MediaMetadata;
@@ -7,40 +9,61 @@ import androidx.media3.common.MediaMetadata;
 import com.fongmi.android.tv.bean.Episode;
 import com.fongmi.android.tv.bean.History;
 import com.fongmi.android.tv.bean.Result;
-import com.fongmi.android.tv.bean.Vod;
 import com.fongmi.android.tv.playback.PlaybackResult;
+import com.fongmi.android.tv.player.extractor.Source;
+
+import java.util.function.LongSupplier;
 
 final class VodPreloader {
+
+    private static final long PRELOAD_DELAY_MS = 30_000;
 
     private final VodPlaybackHost host;
     private final VodDataSource dataSource;
     private final VodPlaybackState state;
+    private final LongSupplier clock;
+    private long playedMs;
+    private long playingSinceMs = C.TIME_UNSET;
+    private boolean waiting;
 
     VodPreloader(VodPlaybackHost host, VodDataSource dataSource, VodPlaybackState state) {
+        this(host, dataSource, state, SystemClock::elapsedRealtime);
+    }
+
+    VodPreloader(VodPlaybackHost host, VodDataSource dataSource, VodPlaybackState state, LongSupplier clock) {
         this.host = host;
         this.dataSource = dataSource;
         this.state = state;
-    }
-
-    boolean deferUpdate(Vod item) {
-        VodPlaybackState.PreloadEntry preload = state.getPreload();
-        if (preload != null && preload.isPending()) {
-            state.setPreloadUpdate(item);
-            return true;
-        }
-        if (preload != null) state.setPreloadUpdate(null);
-        return false;
+        this.clock = clock;
     }
 
     void update(Result result) {
-        if (result.needParse() || state.isUseParse()) clear();
-        else preloadNext();
+        clear();
+        if (result.needParse() || state.isUseParse() || findNextEpisode() == null) return;
+        waiting = true;
+        onPlayingChanged(host.isPlayerPlaying());
     }
 
-    void preloadNext() {
+    void onPlayingChanged(boolean playing) {
+        if (!waiting) return;
+        long now = clock.getAsLong();
+        if (playingSinceMs != C.TIME_UNSET) playedMs += now - playingSinceMs;
+        playingSinceMs = playing ? now : C.TIME_UNSET;
+    }
+
+    void onTimeChanged() {
+        if (!waiting) return;
+        onPlayingChanged(host.isPlayerPlaying());
+        if (playingSinceMs != C.TIME_UNSET && playedMs >= PRELOAD_DELAY_MS) preloadNext();
+    }
+
+    private void preloadNext() {
         Episode episode = findNextEpisode();
-        if (episode == null) clear();
-        else request(episode);
+        clear();
+        if (episode == null) return;
+        VodPlayRequest request = VodPlayRequest.create(host.getVodKey(), state.getFlag(), episode, state.isBuiltin(), state.getQualityPosition(), C.TIME_UNSET);
+        state.beginPreload(request);
+        dataSource.preloadContent(request);
     }
 
     @Nullable
@@ -50,20 +73,29 @@ final class VodPreloader {
         return preload;
     }
 
+    boolean seek(Episode episode) {
+        VodPlaybackState.PreloadEntry preload = state.getPreload();
+        return preload != null && !preload.isPending() && preload.request().matches(host.getVodKey(), state.getFlag(), episode) && host.seekToPreloaded(preload.request());
+    }
+
     void onResult(PlaybackResult<VodPlayRequest> preload) {
-        if (!isPending(preload)) return;
+        VodPlaybackState.PreloadEntry pending = state.getPreload();
+        if (preload == null || pending == null || !pending.isPending() || pending.request() != preload.request()) return;
         apply(preload.request(), preload.result());
     }
 
-    void clear() {
-        state.clearPreload();
-        host.clearPreload();
+    void onError(VodPlayRequest request) {
+        VodPlaybackState.PreloadEntry preload = state.getPreload();
+        if (preload != null && preload.request() == request) clear();
     }
 
-    private void request(Episode episode) {
-        VodPlayRequest request = VodPlayRequest.create(host.getVodKey(), state.getFlag(), episode);
-        state.beginPreload(request);
-        dataSource.preloadContent(request);
+    void clear() {
+        waiting = false;
+        playedMs = 0;
+        playingSinceMs = C.TIME_UNSET;
+        dataSource.cancelPreloadContent();
+        state.clearPreload();
+        host.clearPreload();
     }
 
     @Nullable
@@ -75,26 +107,21 @@ final class VodPreloader {
         return episode.isSelected() ? null : episode;
     }
 
-    private boolean isPending(PlaybackResult<VodPlayRequest> preload) {
-        VodPlaybackState.PreloadEntry pending = state.getPreload();
-        return preload != null && pending != null && pending.isPending() && pending.request().matches(preload.request());
-    }
-
     private void apply(VodPlayRequest request, Result result) {
+        if (result != null && !result.getUrl().getValues().isEmpty()) result.getUrl().set(request.getQualityPosition());
         Episode episode = state.findEpisode(host.getVodKey(), request);
-        if (isPreloadable(request, result, episode)) start(result, episode);
+        if (isPreloadable(request, result, episode)) start(request, result, episode);
         else clear();
     }
 
     private boolean isPreloadable(VodPlayRequest request, Result result, Episode episode) {
-        return episode != null && host.canPreloadNext() && request.accepts(result) && !result.hasMsg() && !result.needParse() && !result.isUseParse() && result.getDrm() == null && !result.getRealUrl().isEmpty();
+        return episode != null && host.canPreloadNext() && request.accepts(result) && !result.hasMsg() && !result.needParse() && !result.isUseParse() && result.getDrm() == null && !result.getRealUrl().isEmpty() && Source.get().canPreload(result.getUrl().uri());
     }
 
-    private void start(Result result, Episode episode) {
-        result.getUrl().set(state.getQualityPosition());
+    private void start(VodPlayRequest request, Result result, Episode episode) {
         MediaMetadata metadata = VodPlaybackMedia.metadata(state.getHistory(), episode);
         long position = Math.max(0, VodSkipPolicy.startPositionMs(state.getHistory(), result, C.TIME_UNSET));
-        if (host.preloadPlayback(result, position, metadata)) state.completePreload(result);
+        if (host.preloadPlayback(result, position, metadata, request)) state.completePreload(result);
         else clear();
     }
 }

@@ -29,12 +29,10 @@ public record PlaybackContent(long primaryStartTimeUs, long primaryEndTimeUs, St
         return primaryEndTimeUs == C.TIME_UNSET || secondaryEndTimeUs == C.TIME_UNSET ? C.TIME_UNSET : Math.max(primaryEndTimeUs, secondaryEndTimeUs);
     }
 
-    /** Returns the seek position in milliseconds, clamped to the start of playback. */
     public long getPosition() {
         return Math.max(0, startTimeUs() / 1000);
     }
 
-    /** Returns the presentation second, including negative times after applying an offset. */
     public long startTimeSeconds() {
         return Math.floorDiv(startTimeUs(), C.MICROS_PER_SECOND);
     }
@@ -107,7 +105,8 @@ public record PlaybackContent(long primaryStartTimeUs, long primaryEndTimeUs, St
         return result;
     }
 
-    private record DanmakuKey(long second, String text) {}
+    private record DanmakuKey(long second, String text) {
+    }
 
     public PlaybackContent offset(long offsetMs) {
         long offsetUs = offsetMs * 1000;
@@ -121,14 +120,16 @@ public record PlaybackContent(long primaryStartTimeUs, long primaryEndTimeUs, St
         while (i < primary.size() && j < secondary.size()) {
             PlaybackContent first = primary.get(i);
             PlaybackContent second = secondary.get(j);
-            // Pair at the displayed millisecond precision without changing either interval.
             int order = Long.compare(Math.floorDiv(first.startTimeUs(), 1000), Math.floorDiv(second.startTimeUs(), 1000));
             if (order == 0) {
                 result.add(new PlaybackContent(first.primaryStartTimeUs, first.primaryEndTimeUs, first.primary, second.secondaryStartTimeUs, second.secondaryEndTimeUs, second.secondary, false));
                 i++;
                 j++;
-            } else if (order <= 0) result.add(primary.get(i++));
-            else result.add(secondary.get(j++));
+            } else if (order <= 0) {
+                result.add(primary.get(i++));
+            } else {
+                result.add(secondary.get(j++));
+            }
         }
         result.addAll(primary.subList(i, primary.size()));
         result.addAll(secondary.subList(j, secondary.size()));

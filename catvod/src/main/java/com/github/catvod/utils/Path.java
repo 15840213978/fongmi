@@ -2,11 +2,10 @@ package com.github.catvod.utils;
 
 import android.net.Uri;
 import android.os.Environment;
-import android.os.StatFs;
 import android.system.ErrnoException;
 import android.system.Os;
 
-import com.github.catvod.Init;
+import com.github.catvod.Runtime;
 import com.orhanobut.logger.Logger;
 
 import java.io.ByteArrayInputStream;
@@ -47,11 +46,11 @@ public class Path {
     }
 
     public static File cache() {
-        return Init.context().getCacheDir();
+        return Runtime.context().getCacheDir();
     }
 
     public static File files() {
-        return Init.context().getFilesDir();
+        return Runtime.context().getFilesDir();
     }
 
     public static String rootPath() {
@@ -108,10 +107,6 @@ public class Path {
 
     public static File epg() {
         return mkdir(new File(cache(), "epg"));
-    }
-
-    public static File jpa() {
-        return mkdir(new File(cache(), "jpa"));
     }
 
     public static File thunder() {
@@ -185,7 +180,7 @@ public class Path {
     }
 
     public static InputStream open(Uri uri, String error) throws IOException {
-        InputStream input = Init.context().getContentResolver().openInputStream(uri);
+        InputStream input = Runtime.context().getContentResolver().openInputStream(uri);
         if (input == null) throw new IOException(error);
         return input;
     }
@@ -198,7 +193,7 @@ public class Path {
         }
     }
 
-    private static byte[] readToByte(InputStream is) throws IOException {
+    public static byte[] readToByte(InputStream is) throws IOException {
         try (InputStream input = is; ByteArrayOutputStream bos = new ByteArrayOutputStream()) {
             transfer(input, bos);
             return bos.toByteArray();
@@ -217,18 +212,22 @@ public class Path {
     public static void writeAtomically(File file, InputStream is) throws IOException {
         try (InputStream input = is) {
             File parent = file.getAbsoluteFile().getParentFile();
-            if (parent == null || (!parent.isDirectory() && !parent.mkdirs())) throw new IOException("Unable to create " + parent);
+            if (parent == null || (!parent.isDirectory() && !parent.mkdirs() && !parent.isDirectory())) throw new IOException("Unable to create " + parent);
             File temp = File.createTempFile("write-", ".tmp", parent);
             try {
-                try (FileOutputStream output = new FileOutputStream(temp)) {
-                    transfer(input, output);
-                    output.flush();
-                    output.getFD().sync();
-                }
+                writeSynced(temp, input);
                 move(temp, file);
             } finally {
                 clear(temp);
             }
+        }
+    }
+
+    private static void writeSynced(File file, InputStream input) throws IOException {
+        try (FileOutputStream output = new FileOutputStream(file)) {
+            transfer(input, output);
+            output.flush();
+            output.getFD().sync();
         }
     }
 
@@ -286,12 +285,13 @@ public class Path {
     }
 
     public static long available(File file) {
-        try {
-            StatFs stat = new StatFs(file.getAbsolutePath());
-            return stat.getAvailableBlocksLong() * stat.getBlockSizeLong();
-        } catch (Exception e) {
-            return 0;
-        }
+        File directory = file == null ? null : file.getAbsoluteFile();
+        while (directory != null && !directory.isDirectory()) directory = directory.getParentFile();
+        return directory == null ? 0 : directory.getUsableSpace();
+    }
+
+    public static void requireSpace(File file, long bytes) throws IOException {
+        if (bytes > 0 && available(file) < bytes) throw new IOException("Insufficient storage space");
     }
 
     private static void copyOrThrow(File in, File out) throws IOException {
@@ -339,13 +339,18 @@ public class Path {
             if (parent != null) mkdir(parent);
             if (file.exists()) clear(file);
             if (file.createNewFile()) Logger.t(TAG).d("Create:" + file);
-            file.setReadable(true);
-            file.setWritable(true);
-            file.setExecutable(true);
-            Shell.exec("chmod 777 " + file);
-            return file;
+            return chmod(file);
         } catch (IOException e) {
             return file;
         }
+    }
+
+    public static File chmod(File file) {
+        try {
+            Os.chmod(file.getAbsolutePath(), 0777);
+        } catch (ErrnoException e) {
+            e.printStackTrace();
+        }
+        return file;
     }
 }

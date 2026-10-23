@@ -88,12 +88,14 @@ public class Epg {
 
     private void setTime(ZoneId zoneId) {
         setList(new ArrayList<>(new LinkedHashSet<>(getList())));
-        for (EpgData item : getList()) {
-            item.setStartTime(parseEpgTime(getDate().concat(item.getStart()), zoneId));
-            item.setEndTime(parseEpgTime(getDate().concat(item.getEnd()), zoneId));
-            if (item.getEndTime() < item.getStartTime()) item.checkDay(zoneId);
-            item.trans();
-        }
+        for (EpgData item : getList()) setTime(item, zoneId);
+    }
+
+    private void setTime(EpgData item, ZoneId zoneId) {
+        item.setStartTime(parseEpgTime(getDate().concat(item.getStart()), zoneId));
+        item.setEndTime(parseEpgTime(getDate().concat(item.getEnd()), zoneId));
+        if (item.getEndTime() < item.getStartTime()) item.checkDay(zoneId);
+        item.trans();
     }
 
     public EpgData getEpgData() {

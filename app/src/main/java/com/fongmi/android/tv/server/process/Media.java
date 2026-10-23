@@ -1,7 +1,5 @@
 package com.fongmi.android.tv.server.process;
 
-import android.net.Uri;
-
 import androidx.media3.common.MediaMetadata;
 
 import com.fongmi.android.tv.App;
@@ -13,6 +11,7 @@ import com.fongmi.android.tv.service.PlaybackService;
 import com.google.gson.JsonObject;
 
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 
 import fi.iki.elonen.NanoHTTPD.IHTTPSession;
@@ -47,17 +46,9 @@ public class Media implements Process {
         result.addProperty("duration", snapshot.duration());
         result.addProperty("position", snapshot.position());
         result.addProperty("url", snapshot.url());
-        result.addProperty("title", getString(meta.title));
-        result.addProperty("artist", getString(meta.artist));
-        result.addProperty("artwork", getString(meta.artworkUri));
+        result.addProperty("title", Objects.toString(meta.title, ""));
+        result.addProperty("artist", Objects.toString(meta.artist, ""));
+        result.addProperty("artwork", Objects.toString(meta.artworkUri, ""));
         return result;
-    }
-
-    private String getString(CharSequence text) {
-        return text != null ? text.toString() : "";
-    }
-
-    private String getString(Uri uri) {
-        return uri != null ? uri.toString() : "";
     }
 }

@@ -1,4 +1,3 @@
--- Execute mpv input.conf command syntax while reporting the result to the Android UI.
 local mp = require 'mp'
 local completed = 0
 

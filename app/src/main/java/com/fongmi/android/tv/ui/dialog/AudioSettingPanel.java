@@ -4,14 +4,15 @@ import static com.fongmi.android.tv.ui.dialog.SettingPanelViews.applyEnabled;
 
 import android.view.LayoutInflater;
 import android.view.View;
+import android.widget.CompoundButton;
 
 import androidx.media3.common.Format;
+import androidx.media3.common.audio.AudioChannelMode;
 
 import com.fongmi.android.tv.R;
 import com.fongmi.android.tv.databinding.DialogAudioSettingBinding;
 import com.fongmi.android.tv.databinding.ViewSettingSliderBinding;
 import com.fongmi.android.tv.player.PlayerManager;
-import com.fongmi.android.tv.player.effect.audio.AudioChannelMode;
 import com.fongmi.android.tv.player.effect.audio.AudioEffectBands;
 import com.fongmi.android.tv.player.effect.audio.AudioEffectConfig;
 import com.fongmi.android.tv.player.effect.audio.AudioEffectPreset;
@@ -20,14 +21,12 @@ import com.fongmi.android.tv.setting.AudioSetting;
 import com.fongmi.android.tv.utils.SliderUtil;
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.chip.ChipGroup;
-import com.google.android.material.materialswitch.MaterialSwitch;
 import com.google.android.material.slider.LabelFormatter;
 import com.google.android.material.slider.Slider;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
-import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 
 final class AudioSettingPanel {
@@ -78,13 +77,12 @@ final class AudioSettingPanel {
         updatePresetCheck();
         bindSliders();
         bindChannelMode();
-        bindSwitches();
+        bindLoudness();
         SettingPanelViews.bindTabs(binding.tabGroup, getTabs(), this::showTab);
         SettingPanelViews.bindCompare(binding.compare, this::previewOriginal);
         bindReset();
         showTab(0);
         updateControls();
-        PlaybackDialogFocus.preferCheckedChips(binding.getRoot());
         PlaybackDialogFocus.selectFirstTab(binding.getRoot(), binding.tabGroup, binding.tabPreset);
     }
 
@@ -135,12 +133,7 @@ final class AudioSettingPanel {
         if (bands.isEmpty()) return;
         short[] levels = AudioSetting.isEnabled() ? AudioSetting.getLevels(bands) : AudioPresetLevels.of(AudioEffectPreset.OFF, bands);
         LayoutInflater inflater = LayoutInflater.from(binding.bands.getContext());
-        for (int i = 0; i < bands.getCount(); i++) {
-            ViewSettingSliderBinding item = ViewSettingSliderBinding.inflate(inflater, binding.bands, false);
-            setupBandSlider(item, i, levels[i]);
-            bandViews.add(item);
-            binding.bands.addView(item.getRoot());
-        }
+        for (int i = 0; i < bands.getCount(); i++) addBandSlider(inflater, i, levels);
     }
 
     private void onChannelModeChecked(ChipGroup group, List<Integer> checkedIds) {
@@ -164,26 +157,26 @@ final class AudioSettingPanel {
         binding.channelModeGroup.setOnCheckedStateChangeListener(this::onChannelModeChecked);
     }
 
-    private void bindSwitches() {
-        setupSwitch(binding.loudness, AudioSetting.isLoudnessEnabled(), AudioSetting::putLoudness);
+    private void bindLoudness() {
+        binding.loudness.setOnCheckedChangeListener(null);
+        binding.loudness.setChecked(AudioSetting.isLoudnessEnabled());
+        binding.loudness.setOnCheckedChangeListener(this::onLoudnessChanged);
     }
 
-    private void setupSwitch(MaterialSwitch item, boolean checked, Consumer<Boolean> setter) {
-        item.setOnCheckedChangeListener(null);
-        item.setChecked(checked);
-        item.setOnCheckedChangeListener((button, enabled) -> {
-            previewOriginal(false);
-            setter.accept(enabled);
-            apply();
-        });
+    private void onLoudnessChanged(CompoundButton button, boolean enabled) {
+        previewOriginal(false);
+        AudioSetting.putLoudness(enabled);
+        apply();
     }
 
     private void bindReset() {
         binding.reset.setOnClickListener(this::onReset);
-        binding.reset.setOnLongClickListener(view -> {
-            resetAll();
-            return true;
-        });
+        binding.reset.setOnLongClickListener(this::onResetLong);
+    }
+
+    private boolean onResetLong(View view) {
+        resetAll();
+        return true;
     }
 
     private void onReset(View view) {
@@ -216,7 +209,7 @@ final class AudioSettingPanel {
         AudioSetting.resetAdvanced();
         bindChannelMode();
         bindOptions();
-        bindSwitches();
+        bindLoudness();
         apply();
     }
 
@@ -236,6 +229,7 @@ final class AudioSettingPanel {
     private void setupOptionSlider(ViewSettingSliderBinding item, int titleRes, int min, int max, int stepSize, int initial, LabelFormatter formatter, IntConsumer setter) {
         Slider slider = item.slider;
         item.title.setText(titleRes);
+        slider.setContentDescription(item.title.getText());
         slider.clearOnChangeListeners();
         slider.setValueFrom(min);
         slider.setValueTo(max);
@@ -256,6 +250,7 @@ final class AudioSettingPanel {
     private void setupOffsetSlider() {
         Slider slider = binding.offset.slider;
         binding.offset.title.setText(R.string.audio_offset);
+        slider.setContentDescription(binding.offset.title.getText());
         slider.clearOnChangeListeners();
         slider.setValueFrom(MIN_AUDIO_OFFSET_MS);
         slider.setValueTo(MAX_AUDIO_OFFSET_MS);
@@ -272,10 +267,18 @@ final class AudioSettingPanel {
         });
     }
 
+    private void addBandSlider(LayoutInflater inflater, int index, short[] levels) {
+        ViewSettingSliderBinding item = ViewSettingSliderBinding.inflate(inflater, binding.bands, false);
+        setupBandSlider(item, index, levels[index]);
+        bandViews.add(item);
+        binding.bands.addView(item.getRoot());
+    }
+
     private void setupBandSlider(ViewSettingSliderBinding item, int index, short initial) {
         Slider slider = item.slider;
         int stepSize = getStepSize();
         item.title.setText(formatFrequency(bands.getCenterFrequency(index)));
+        slider.setContentDescription(item.title.getText());
         slider.clearOnChangeListeners();
         slider.setValueFrom(bands.getMinLevel());
         slider.setValueTo(bands.getMaxLevel());
@@ -363,7 +366,7 @@ final class AudioSettingPanel {
         updatePresetCheck();
         bindChannelMode();
         bindSliders();
-        bindSwitches();
+        bindLoudness();
     }
 
     private void setAudioSetting(int preset) {

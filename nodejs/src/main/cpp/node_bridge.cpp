@@ -22,6 +22,24 @@ struct LogPipe {
     int priority{};
 };
 
+void write_log_line(LogPipe *pipe, std::string &line, bool truncated) {
+    if (truncated) line.append(kTruncatedSuffix);
+    if (!line.empty()) __android_log_write(pipe->priority, kLogTag, line.c_str());
+}
+
+void append_log_character(LogPipe *pipe, char character, std::string &line, bool &truncated) {
+    if (character == '\n') {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        write_log_line(pipe, line, truncated);
+        line.clear();
+        truncated = false;
+    } else if (line.size() < kMaxLogLineBytes) {
+        line.push_back(character);
+    } else {
+        truncated = true;
+    }
+}
+
 void *forward_log(void *value) {
     auto *pipe = static_cast<LogPipe *>(value);
     char buffer[2048];
@@ -29,22 +47,9 @@ void *forward_log(void *value) {
     bool truncated = false;
     ssize_t count;
     while ((count = read(pipe->descriptor[0], buffer, sizeof(buffer) - 1)) > 0) {
-        for (ssize_t i = 0; i < count; ++i) {
-            if (buffer[i] == '\n') {
-                if (!line.empty() && line.back() == '\r') line.pop_back();
-                if (truncated) line.append(kTruncatedSuffix);
-                if (!line.empty()) __android_log_write(pipe->priority, kLogTag, line.c_str());
-                line.clear();
-                truncated = false;
-            } else if (line.size() < kMaxLogLineBytes) {
-                line.push_back(buffer[i]);
-            } else {
-                truncated = true;
-            }
-        }
+        for (ssize_t i = 0; i < count; ++i) append_log_character(pipe, buffer[i], line, truncated);
     }
-    if (truncated) line.append(kTruncatedSuffix);
-    if (!line.empty()) __android_log_write(pipe->priority, kLogTag, line.c_str());
+    write_log_line(pipe, line, truncated);
     close(pipe->descriptor[0]);
     delete pipe;
     return nullptr;
@@ -65,14 +70,31 @@ void redirect_descriptor(int target, int priority) {
         return;
     }
     pthread_detach(thread);
-    if (dup2(log_pipe->descriptor[1], target) < 0) {
-        close(log_pipe->descriptor[1]);
-        return;
-    }
+    dup2(log_pipe->descriptor[1], target);
     close(log_pipe->descriptor[1]);
 }
 
-}  // namespace
+bool copy_arguments(JNIEnv *env, jobjectArray arguments, jsize argument_count, char **argv, char *buffer) {
+    char *position = buffer;
+    for (jsize i = 0; i < argument_count; ++i) {
+        auto argument = static_cast<jstring>(env->GetObjectArrayElement(arguments, i));
+        if (argument == nullptr) return false;
+        const char *value = env->GetStringUTFChars(argument, nullptr);
+        if (value == nullptr) {
+            env->DeleteLocalRef(argument);
+            return false;
+        }
+        const size_t length = strlen(value);
+        memcpy(position, value, length);
+        argv[i] = position;
+        position += length + 1;
+        env->ReleaseStringUTFChars(argument, value);
+        env->DeleteLocalRef(argument);
+    }
+    return true;
+}
+
+}
 
 extern "C" JNIEXPORT jint JNICALL
 Java_com_fongmi_nodejs_NodeService_startNodeWithArguments(
@@ -97,27 +119,10 @@ Java_com_fongmi_nodejs_NodeService_startNodeWithArguments(
         return -1;
     }
 
-    char *position = buffer;
-    for (jsize i = 0; i < argument_count; ++i) {
-        auto argument = static_cast<jstring>(env->GetObjectArrayElement(arguments, i));
-        if (argument == nullptr) {
-            free(argv);
-            free(buffer);
-            return -1;
-        }
-        const char *value = env->GetStringUTFChars(argument, nullptr);
-        if (value == nullptr) {
-            env->DeleteLocalRef(argument);
-            free(argv);
-            free(buffer);
-            return -1;
-        }
-        const size_t length = strlen(value);
-        memcpy(position, value, length);
-        argv[i] = position;
-        position += length + 1;
-        env->ReleaseStringUTFChars(argument, value);
-        env->DeleteLocalRef(argument);
+    if (!copy_arguments(env, arguments, argument_count, argv, buffer)) {
+        free(argv);
+        free(buffer);
+        return -1;
     }
 
     redirect_descriptor(STDOUT_FILENO, ANDROID_LOG_INFO);

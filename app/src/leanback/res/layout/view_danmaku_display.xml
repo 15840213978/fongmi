@@ -15,6 +15,7 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
+            android:labelFor="@id/showScrollSwitch"
             android:text="@string/danmaku_show_scroll"
             android:textAppearance="?attr/textAppearanceBodyLarge" />
 
@@ -40,6 +41,7 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
+            android:labelFor="@id/showTopSwitch"
             android:text="@string/danmaku_show_top"
             android:textAppearance="?attr/textAppearanceBodyLarge" />
 
@@ -65,6 +67,7 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
+            android:labelFor="@id/showBottomSwitch"
             android:text="@string/danmaku_show_bottom"
             android:textAppearance="?attr/textAppearanceBodyLarge" />
 
@@ -90,6 +93,7 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
+            android:labelFor="@id/showReverseSwitch"
             android:text="@string/danmaku_show_reverse"
             android:textAppearance="?attr/textAppearanceBodyLarge" />
 
@@ -115,6 +119,7 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
+            android:labelFor="@id/showPositionedSwitch"
             android:text="@string/danmaku_show_positioned"
             android:textAppearance="?attr/textAppearanceBodyLarge" />
 
@@ -140,6 +145,7 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
+            android:labelFor="@id/showSubtitleSwitch"
             android:text="@string/danmaku_show_subtitle"
             android:textAppearance="?attr/textAppearanceBodyLarge" />
 
@@ -165,6 +171,7 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
+            android:labelFor="@id/showSpecialSwitch"
             android:text="@string/danmaku_show_special"
             android:textAppearance="?attr/textAppearanceBodyLarge" />
 

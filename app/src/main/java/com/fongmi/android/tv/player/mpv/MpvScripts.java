@@ -26,7 +26,6 @@ import java.util.Locale;
 import java.util.UUID;
 import java.util.function.UnaryOperator;
 
-/** Managed Lua scripts and mpv command buttons. */
 public final class MpvScripts {
 
     public static final String PREFERENCE_KEY = "mpv_scripts";
@@ -37,35 +36,41 @@ public final class MpvScripts {
     private MpvScripts() {
     }
 
-    // SharedPreferences provides an atomic snapshot; readers never wait for file I/O.
     public static List<Item> read() throws JSONException {
         JSONArray array = new JSONArray(Prefers.getString(PREFERENCE_KEY, "[]"));
         List<Item> items = new ArrayList<>();
-        for (int i = 0; i < array.length(); i++) {
-            JSONObject object = array.getJSONObject(i);
-            String id = object.getString("id");
-            if (!id.matches("[a-f0-9]{32}")) throw new JSONException("Invalid script ID");
-            String name = object.getString("fileName");
-            String command = object.optString("command", "");
-            String legacyBinding = object.optString("binding", "");
-            boolean automatic = object.getBoolean("automatic");
-            if (!legacyBinding.isEmpty()) {
-                if (!command.isEmpty()) throw new JSONException("Invalid command button");
-                command = "script-binding " + validateBinding(legacyBinding);
-            }
-            if (!command.isEmpty()) {
-                command = validateCommand(command);
-                if (automatic || !name.isEmpty()) throw new JSONException("Invalid command button");
-            } else if (!name.equals(new File(name).getName()) || name.contains("\\") || !name.endsWith(".lua")) throw new JSONException("Invalid script filename");
-            items.add(new Item(id, validateTitle(object.getString("title")), name, automatic, object.getBoolean("enabled"), command, object.optBoolean("hidden", false)));
-        }
+        for (int i = 0; i < array.length(); i++) items.add(readItem(array.getJSONObject(i)));
         return items;
+    }
+
+    private static Item readItem(JSONObject object) throws JSONException {
+        String id = object.getString("id");
+        if (!id.matches("[a-f0-9]{32}")) throw new JSONException("Invalid script ID");
+        String name = object.getString("fileName");
+        String command = object.optString("command", "");
+        String legacyBinding = object.optString("binding", "");
+        boolean automatic = object.getBoolean("automatic");
+        if (!legacyBinding.isEmpty()) {
+            if (!command.isEmpty()) throw new JSONException("Invalid command button");
+            command = "script-binding " + validateBinding(legacyBinding);
+        }
+        if (!command.isEmpty()) {
+            command = validateCommand(command);
+            if (automatic || !name.isEmpty()) throw new JSONException("Invalid command button");
+        } else if (!name.equals(new File(name).getName()) || name.contains("\\") || !name.endsWith(".lua")) {
+            throw new JSONException("Invalid script filename");
+        }
+        return new Item(id, validateTitle(object.getString("title")), name, automatic, object.getBoolean("enabled"), command, object.optBoolean("hidden", false));
     }
 
     private static void write(List<Item> items) throws JSONException {
         JSONArray array = new JSONArray();
-        for (Item item : items) array.put(new JSONObject().put("id", item.id).put("title", item.title).put("fileName", item.fileName).put("automatic", item.automatic).put("enabled", item.enabled).put("command", item.command).put("hidden", item.hidden));
+        for (Item item : items) array.put(writeItem(item));
         Prefers.put(PREFERENCE_KEY, array.toString());
+    }
+
+    private static JSONObject writeItem(Item item) throws JSONException {
+        return new JSONObject().put("id", item.id).put("title", item.title).put("fileName", item.fileName).put("automatic", item.automatic).put("enabled", item.enabled).put("command", item.command).put("hidden", item.hidden);
     }
 
     public static Item importFrom(Uri uri, boolean automatic, String replaceId) throws IOException, JSONException {
@@ -102,16 +107,18 @@ public final class MpvScripts {
             if (added) items.add(item);
             write(items);
         } catch (IOException | JSONException e) {
-            if (added) {
-                try {
-                    deleteFiles(item);
-                } catch (IOException cleanup) {
-                    e.addSuppressed(cleanup);
-                }
-            }
+            if (added) deleteFailedInstall(item, e);
             throw e;
         }
         return item;
+    }
+
+    private static void deleteFailedInstall(Item item, Exception error) {
+        try {
+            deleteFiles(item);
+        } catch (IOException cleanup) {
+            error.addSuppressed(cleanup);
+        }
     }
 
     private static Item createItem(String name, boolean automatic) throws JSONException {
@@ -135,14 +142,10 @@ public final class MpvScripts {
     private static void migrate(Item item) throws IOException {
         if (item.isCommand()) return;
         File directory = Path.files("mpv-scripts/" + item.id);
-        if (directory.exists()) {
-            migrateDirectory(directory, item.source().getParentFile(), item.automatic ? null : "tv_" + item.id + ".lua");
-        }
+        if (directory.exists()) migrateDirectory(directory, item.source().getParentFile(), item.automatic ? null : "tv_" + item.id + ".lua");
         if (item.automatic) {
             File startup = Path.cache("mpv-scripts/" + item.id);
-            if (startup.exists()) {
-                migrateDirectory(startup, item.startup().getParentFile(), item.fileName);
-            }
+            if (startup.exists()) migrateDirectory(startup, item.startup().getParentFile(), item.fileName);
         }
         deleteEmptyDirectory(Path.files("mpv-scripts"));
         deleteEmptyDirectory(Path.cache("mpv-scripts"));
@@ -153,20 +156,22 @@ public final class MpvScripts {
         File[] files = source.listFiles();
         if (files == null) throw new IOException("Unable to read script directory");
         if (!target.isDirectory() && !target.mkdirs() && !target.isDirectory()) throw new IOException("Unable to create script directory");
-        for (File file : files) {
-            if (file.getName().equals(generatedName)) continue;
-            if (!file.getCanonicalFile().equals(new File(source.getCanonicalFile(), file.getName()))) throw new IOException("Unable to move a script symbolic link");
-            File destination = new File(target, file.getName());
-            if (file.isDirectory()) migrateDirectory(file, destination, null);
-            else {
-                if (!destination.exists()) Path.writeAtomically(destination, file);
-                else if (!Arrays.equals(Crypto.sha256(file), Crypto.sha256(destination))) throw new IOException("Different script file already exists: " + file.getName());
-                deleteFile(file);
-            }
-        }
-        // Generated wrappers contain old absolute paths and are recreated after migration.
+        for (File file : files) if (!file.getName().equals(generatedName)) migrateEntry(source, target, file);
         if (generatedName != null) deleteFile(new File(source, generatedName));
         deleteEmptyDirectory(source);
+    }
+
+    private static void migrateEntry(File source, File target, File file) throws IOException {
+        if (!file.getCanonicalFile().equals(new File(source.getCanonicalFile(), file.getName()))) throw new IOException("Unable to move a script symbolic link");
+        File destination = new File(target, file.getName());
+        if (file.isDirectory()) migrateDirectory(file, destination, null);
+        else migrateFile(file, destination);
+    }
+
+    private static void migrateFile(File source, File target) throws IOException {
+        if (!target.exists()) Path.writeAtomically(target, source);
+        else if (!Arrays.equals(Crypto.sha256(source), Crypto.sha256(target))) throw new IOException("Different script file already exists: " + source.getName());
+        deleteFile(source);
     }
 
     private static File writeRunner(Item item, String asset, File file, String generation) throws IOException {
@@ -210,7 +215,7 @@ public final class MpvScripts {
 
     private static String validateCommand(String command) throws JSONException {
         command = command.strip();
-        if (command.isEmpty() || command.length() > MAX_COMMAND_LENGTH || command.chars().anyMatch(Character::isISOControl)) throw new JSONException("Invalid MPV command");
+        if (command.isEmpty() || command.length() > MAX_COMMAND_LENGTH || command.chars().anyMatch(Character::isISOControl)) throw new JSONException("Invalid command");
         return command;
     }
 
@@ -223,13 +228,13 @@ public final class MpvScripts {
     }
 
     public static synchronized void updateCommand(String id, String title, String command) throws JSONException {
-        String name = validateTitle(title);
-        String value = validateCommand(command);
+        String validatedTitle = validateTitle(title);
+        String validatedCommand = validateCommand(command);
         List<Item> items = read();
         int index = requireIndex(items, id);
         Item item = items.get(index);
         if (!item.isCommand()) throw new JSONException("Item is not a command button");
-        items.set(index, new Item(item.id, name, "", false, item.enabled, value, item.hidden));
+        items.set(index, new Item(item.id, validatedTitle, "", false, item.enabled, validatedCommand, item.hidden));
         write(items);
     }
 
@@ -251,18 +256,14 @@ public final class MpvScripts {
         update(id, item -> new Item(item.id, item.title, item.fileName, item.automatic, item.enabled, item.command, hidden));
     }
 
-    /** Moves a button past its neighboring button while preserving startup-script order. */
-    public static synchronized void move(String id, boolean earlier) throws JSONException {
+    public static synchronized void move(String buttonId, String neighborButtonId) throws JSONException {
         List<Item> items = read();
-        int index = requireIndex(items, id);
-        if (items.get(index).automatic) throw new JSONException("Only action buttons can be moved");
-        int step = earlier ? -1 : 1;
-        for (int target = index + step; target >= 0 && target < items.size(); target += step) {
-            if (items.get(target).automatic) continue;
-            Collections.swap(items, index, target);
-            write(items);
-            return;
-        }
+        int index = requireIndex(items, buttonId);
+        int neighborIndex = requireIndex(items, neighborButtonId);
+        if (items.get(index).automatic || items.get(neighborIndex).automatic) throw new JSONException("Only action buttons can be moved");
+        if (index == neighborIndex) return;
+        Collections.swap(items, index, neighborIndex);
+        write(items);
     }
 
     private static synchronized void update(String id, UnaryOperator<Item> operation) throws JSONException {
@@ -286,18 +287,28 @@ public final class MpvScripts {
             deleteEmptyDirectory(item.runner().getParentFile());
             return;
         }
+        deleteLuaFiles(item);
+        deleteLegacyFiles(item);
+    }
+
+    private static void deleteLuaFiles(Item item) throws IOException {
         deleteFile(item.source());
-        if (!item.automatic) deleteFile(item.runner());
-        else {
+        if (!item.automatic) {
+            deleteFile(item.runner());
+        } else {
             File startup = item.startup();
             deleteFile(startup);
             deleteEmptyDirectory(startup.getParentFile());
         }
         deleteEmptyDirectory(item.source().getParentFile());
+    }
+
+    private static void deleteLegacyFiles(Item item) throws IOException {
         File legacy = Path.files("mpv-scripts/" + item.id);
         deleteFile(new File(legacy, item.fileName));
-        if (!item.automatic) deleteFile(new File(legacy, "tv_" + item.id + ".lua"));
-        else {
+        if (!item.automatic) {
+            deleteFile(new File(legacy, "tv_" + item.id + ".lua"));
+        } else {
             File startup = new File(Path.cache("mpv-scripts/" + item.id), item.fileName);
             deleteFile(startup);
             deleteEmptyDirectory(startup.getParentFile());
@@ -307,7 +318,6 @@ public final class MpvScripts {
 
     private static void deleteEmptyDirectory(File directory) throws IOException {
         String[] remaining = directory.list();
-        // Scripts may create their own data files. Only remove an empty directory.
         if (remaining != null && remaining.length == 0 && !directory.delete()) throw new IOException("Unable to delete script directory");
     }
 
@@ -316,6 +326,7 @@ public final class MpvScripts {
     }
 
     public static final class Item {
+
         public final String id;
         public final String title;
         public final String fileName;

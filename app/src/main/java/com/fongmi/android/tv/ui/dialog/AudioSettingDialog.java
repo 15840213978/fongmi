@@ -11,6 +11,7 @@ import androidx.fragment.app.FragmentManager;
 import androidx.viewbinding.ViewBinding;
 
 import com.fongmi.android.tv.databinding.DialogAudioSettingBinding;
+import com.fongmi.android.tv.player.PlayerManager;
 import com.fongmi.android.tv.utils.ResUtil;
 import com.fongmi.android.tv.utils.Util;
 
@@ -45,13 +46,16 @@ public final class AudioSettingDialog {
 
         @Override
         protected void initView() {
-            PlaybackDialog.observe(this, player -> {
-                if (panel != null) panel.release();
-                panel = null;
-                if (player == null) return;
-                panel = new AudioSettingPanel(binding, player);
-                panel.bind();
-            });
+            PlaybackDialogFocus.preferCheckedChips(binding.getRoot());
+            PlaybackDialog.observe(this, this::bindPlayer);
+        }
+
+        private void bindPlayer(PlayerManager player) {
+            if (panel != null) panel.release();
+            panel = null;
+            if (player == null) return;
+            panel = new AudioSettingPanel(binding, player);
+            panel.bind();
         }
 
         @Override
@@ -80,13 +84,16 @@ public final class AudioSettingDialog {
 
         @Override
         protected void initView() {
-            PlaybackDialog.observe(this, player -> {
-                if (panel != null) panel.release();
-                panel = null;
-                if (player == null) return;
-                panel = new AudioSettingPanel(binding, player);
-                panel.bind();
-            });
+            PlaybackDialogFocus.preferCheckedChips(binding.getRoot());
+            PlaybackDialog.observe(this, this::bindPlayer);
+        }
+
+        private void bindPlayer(PlayerManager player) {
+            if (panel != null) panel.release();
+            panel = null;
+            if (player == null) return;
+            panel = new AudioSettingPanel(binding, player);
+            panel.bind();
         }
 
         @Override

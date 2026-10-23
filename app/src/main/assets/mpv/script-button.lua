@@ -1,8 +1,6 @@
--- Each button has its own mpv script context. Only the wrapper runs when loaded.
 local mp = require 'mp'
 local completed = 0
 
--- loadfile keeps the wrapper's script context; expose the imported script's directory instead.
 package.path = directory .. '/?.lua;' .. package.path
 mp.get_script_directory = function() return directory end
 

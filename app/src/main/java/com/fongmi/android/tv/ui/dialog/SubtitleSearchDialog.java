@@ -92,17 +92,19 @@ public final class SubtitleSearchDialog extends BaseBottomSheetDialog implements
         binding.recycler.setHasFixedSize(false);
         binding.recycler.addItemDecoration(new SpaceItemDecoration(1, 16));
         binding.recycler.addOnScrollListener(scroller);
-        PlaybackDialog.observe(this, player -> {
-            if (this.player != null && player == null) {
-                SubtitleApi.cancel();
-                showResults(adapter.getItemCount() == 0);
-            }
-            this.player = player;
-            if (player == null || keywordInitialized) return;
-            setKeyword(getTitle());
-            keywordInitialized = true;
-            Util.showKeyboard(binding.keyword);
-        });
+        PlaybackDialog.observe(this, this::bindPlayer);
+    }
+
+    private void bindPlayer(PlayerManager player) {
+        if (this.player != null && player == null) {
+            SubtitleApi.cancel();
+            showResults(adapter.getItemCount() == 0);
+        }
+        this.player = player;
+        if (player == null || keywordInitialized) return;
+        setKeyword(getTitle());
+        keywordInitialized = true;
+        Util.showKeyboard(binding.keyword);
     }
 
     @Override
@@ -126,6 +128,7 @@ public final class SubtitleSearchDialog extends BaseBottomSheetDialog implements
 
     @Override
     public void onItemClick(SubtitleSearchItem item) {
+        if (!PlaybackDialog.isCurrentPlayer(this, player)) return;
         if (item.hasUrl()) applySub(item);
         else detail(item);
     }
@@ -142,7 +145,7 @@ public final class SubtitleSearchDialog extends BaseBottomSheetDialog implements
     private void setKeyword(CharSequence text) {
         if (text == null) text = "";
         binding.keyword.setText(text);
-        binding.keyword.setSelection(text.length());
+        binding.keyword.setSelection(binding.keyword.length());
     }
 
     private void onSetting(View view) {
@@ -206,7 +209,7 @@ public final class SubtitleSearchDialog extends BaseBottomSheetDialog implements
     }
 
     private boolean loadMore() {
-        boolean load = hasMore();
+        boolean load = PlaybackDialog.isCurrentPlayer(this, player) && hasMore();
         if (load) requestSearch();
         return load;
     }

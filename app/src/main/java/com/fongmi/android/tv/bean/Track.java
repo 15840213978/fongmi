@@ -145,11 +145,6 @@ public class Track {
         return this;
     }
 
-    public Track role(int role) {
-        setRole(role);
-        return this;
-    }
-
     public boolean isSecondary() {
         return role == ROLE_SECONDARY;
     }

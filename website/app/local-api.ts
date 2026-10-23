@@ -4,9 +4,12 @@ export const localSections = [
   ["connection", "連線與回應"],
   ["action", "動作指令"],
   ["sync", "裝置同步"],
+  ["remote", "網頁播放與遙控器"],
+  ["logs", "日誌下載與分享"],
   ["media", "播放狀態"],
   ["device", "裝置資訊"],
   ["files", "檔案管理"],
+  ["transfers", "續傳與裝置下載"],
   ["cache", "鍵值快取"],
   ["internal", "代理與內部端點"],
 ] as const;
@@ -49,6 +52,101 @@ export const localControls = [
   ["replay", "重新播放"],
 ] as const;
 
+export const localRemoteControls = [
+  ["play", "播放；已播完時從頭播放。"],
+  ["pause", "暫停目前影片。"],
+  ["stop", "停止播放。"],
+  ["prev", "上一集／上一台；須支援切換項目。"],
+  ["next", "下一集／下一台；須支援切換項目。"],
+  ["repeat_on", "開啟目前影片的單集循環；重複請求仍為開啟。"],
+  ["repeat_off", "關閉單集循環；重複請求仍為關閉。"],
+  ["seek", "跳到 position 指定的毫秒位置；須支援跳轉，不改變播放／暫停狀態。"],
+  ["speed", "以 speed 設定 0.1–5.0 倍速；須支援倍速，直播不可用。"],
+] as const;
+
+export const localRemoteFields: Field[] = [
+  {
+    name: "active",
+    type: "boolean",
+    description: "是否有可遙控的本機播放；false 時不回傳其餘欄位。",
+  },
+  {
+    name: "title",
+    type: "string",
+    description: "目前影片的顯示標題。",
+  },
+  {
+    name: "mediaKey",
+    type: "string",
+    description: "目前播放來源的識別鍵；套用字幕或彈幕時以 key 傳回，換片後須重新取得。",
+  },
+  {
+    name: "artwork",
+    type: "string",
+    description: "目前影片的本機封面端點；沒有封面時為空字串，載入失敗時網頁顯示佔位圖。僅 /remote 回傳此欄位。",
+  },
+  {
+    name: "position",
+    type: "integer",
+    description: "目前播放位置，單位毫秒，最小為 0。",
+  },
+  {
+    name: "duration",
+    type: "integer",
+    description: "總長，單位毫秒；未知長度為 0。",
+  },
+  {
+    name: "state",
+    type: "integer",
+    description: "1＝播放結束；2＝就緒但未播放；3＝正在播放；6＝緩衝中。",
+  },
+  {
+    name: "playWhenReady",
+    type: "boolean",
+    description: "播放器是否設定為播放；影片已播完時為 false。",
+  },
+  {
+    name: "repeatOne",
+    type: "boolean",
+    description: "目前是否開啟單集循環，播完會重新播放同一部影片。",
+  },
+  {
+    name: "live",
+    type: "boolean",
+    description: "是否為直播；網頁隱藏循環開關，API 拒絕循環指令。",
+  },
+  {
+    name: "canNavigate",
+    type: "boolean",
+    description: "是否支援上一項／下一項。",
+  },
+  {
+    name: "canSeek",
+    type: "boolean",
+    description: "是否支援網頁跳轉；直播、未知長度或播放器不能跳轉時為 false。",
+  },
+  {
+    name: "canSetSpeed",
+    type: "boolean",
+    description: "是否支援倍速；直播或播放器不支援時為 false。",
+  },
+  {
+    name: "speed",
+    type: "number",
+    description: "目前播放倍速，例如 1 或 1.5。",
+  },
+  {
+    name: "engine",
+    type: "string",
+    description: "目前播放引擎，ExoPlayer 或 mpv。",
+  },
+  {
+    name: "video",
+    type: "string",
+    description: "播放器回報的視訊尺寸文字。",
+  },
+];
+
 export const localRefresh = [
   ["live", "—", "直播"],
   ["detail", "—", "詳情"],
@@ -67,6 +165,8 @@ export const localFileEndpoints = [
     "path 必填且目錄須已存在；檔案使用 multipart 欄位上傳。",
   ],
   ["/newFolder", "GET / POST", "path 為既有父目錄，name 為新資料夾名稱。"],
+  ["/rename", "POST 表單", "path 為既有檔案或目錄，name 為新名稱；目標不可已存在。"],
+  ["/move", "POST 表單", "path 為來源，target 為既有目標目錄；保留名稱，不覆蓋同名項目，也不可搬進自身目錄。"],
   [
     "/delFolder",
     "GET / POST",
@@ -77,6 +177,17 @@ export const localFileEndpoints = [
     "GET / POST",
     "與 /delFolder 共用刪除邏輯，並非只允許刪除一般檔案。",
   ],
+] as const;
+
+export const localTransferEndpoints = [
+  ["/upload/start", "id、path、name、size、sha256；parallel（選填）", "建立或查詢續傳。id 是 32 位小寫十六進位；size 是檔案位元組數，sha256 是 64 位小寫十六進位。"],
+  ["/upload/chunk", "id、offset、size；multipart chunk，並行模式另帶 revision", "上傳分塊；依 start 回傳的 chunkSize 切分，offset 與 size 以位元組計算。"],
+  ["/upload/finish", "id；並行模式另帶 revision", "檢查完整大小與 SHA-256，再落檔或解壓 ZIP；只有 complete=true 才完成。"],
+  ["/download/start", "url、path；name（選填）", "由 App 裝置下載 HTTP(S) 檔案到既有目錄；省略 name 時取網址最後一段，無名稱時用 download。"],
+  ["/download/status", "id（選填）", "查詢目前任務；省略 id 可重新取得目前任務。"],
+  ["/download/pause", "id", "暫停進行中的任務；依回傳狀態確認，已結束的任務不改變狀態。"],
+  ["/download/resume", "id", "恢復 paused 或 failed 任務；能否接續取決於來源支援及已保存資料。"],
+  ["/download/cancel", "id", "取消任務；停止後為 cancelled，不等同刪除目的檔案。"],
 ] as const;
 
 export const localCacheActions = [

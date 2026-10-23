@@ -30,6 +30,7 @@
 
     <com.google.android.material.slider.Slider
         android:id="@+id/timeOffsetSlider"
+        android:contentDescription="@string/danmaku_time_offset"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginHorizontal="12dp"
@@ -66,6 +67,7 @@
 
     <com.google.android.material.slider.Slider
         android:id="@+id/durationSlider"
+        android:contentDescription="@string/danmaku_duration"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginHorizontal="12dp"
@@ -102,6 +104,7 @@
 
     <com.google.android.material.slider.Slider
         android:id="@+id/fixedDurationSlider"
+        android:contentDescription="@string/danmaku_fixed_duration"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginHorizontal="12dp"

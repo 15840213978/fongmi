@@ -2,11 +2,11 @@
 
 const http = require('http')
 const path = require('path')
+const crypto = require('crypto')
 
-const [, , indexPath, configPath, dataRoot, bridgePortText, token] = process.argv
+const [, , indexPath, configPath, dataRoot, bridgePortText, token, runtimePath] = process.argv
 const bridgePort = Number(bridgePortText)
 const bridgeTokenHeader = 'X-CatVod-Token'
-let runtime = null
 let server = null
 
 process.env.CATVOD_DISABLE_AUTOSTART = '1'
@@ -80,13 +80,29 @@ function reportStarted() {
         token,
         pid: process.pid,
         version: process.version,
+        runtimePath: runtimePath || '',
         arch: process.arch,
     })
 }
 
+function serveHealth(req, res) {
+    req.resume()
+    const actual = Buffer.from(String(req.headers['x-catvod-token'] || ''))
+    const expected = Buffer.from(token || '')
+    if (req.method !== 'GET' || !expected.length || actual.length !== expected.length || !crypto.timingSafeEqual(actual, expected)) {
+        res.writeHead(403)
+        return res.end()
+    }
+    res.setHeader('Content-Type', 'application/json')
+    res.end(JSON.stringify({ value: 6 * 7, pid: process.pid, version: process.version }))
+}
+
 globalThis.catDartServerPort = () => bridgePort
 globalThis.catServerFactory = handler => {
-    server = http.createServer(handler)
+    server = http.createServer((req, res) => {
+        if (req.url.split('?', 1)[0] !== '/__catvod_health') return handler(req, res)
+        return serveHealth(req, res)
+    })
     const listen = server.listen.bind(server)
     server.listen = (...args) => {
         const callback = typeof args[args.length - 1] === 'function' ? args[args.length - 1] : undefined
@@ -100,7 +116,7 @@ async function main() {
     const configModule = require(path.resolve(configPath))
     const indexModule = require(path.resolve(indexPath))
     const config = configModule && (configModule.default || configModule)
-    runtime = indexModule && (indexModule.default || indexModule)
+    const runtime = indexModule && (indexModule.default || indexModule)
     if (!runtime || typeof runtime.start !== 'function') throw new Error('Node bundle does not export start()')
     await runtime.start(config)
 }

@@ -58,7 +58,6 @@ final class VideoSettingPanel {
         bindReset();
         showTab(0);
         updateControls();
-        PlaybackDialogFocus.preferCheckedChips(binding.getRoot());
         PlaybackDialogFocus.selectFirstTab(binding.getRoot(), binding.tabGroup, binding.tabPreset);
     }
 
@@ -76,7 +75,7 @@ final class VideoSettingPanel {
         SettingPanelViews.clearOtherPresets(getPresetGroups(), group, this::onPresetChecked);
         previewOriginal(false);
         setVideoSetting(presetForChip(chipId));
-        updateSliderValues(getDisplayProfile());
+        updateSliderValues(VideoSetting.getProfile());
         updateControls();
     }
 
@@ -89,7 +88,7 @@ final class VideoSettingPanel {
     }
 
     private void bindSliders() {
-        VideoEffectProfile profile = getDisplayProfile();
+        VideoEffectProfile profile = VideoSetting.getProfile();
         setupSlider(binding.saturation, R.string.video_effect_saturation, VideoSetting.MIN_SATURATION, VideoSetting.MAX_SATURATION, 0.01f, profile.getSaturation(), "%.2f", VideoSetting::putSaturation);
         setupSlider(binding.contrast, R.string.video_effect_contrast, VideoSetting.MIN_CONTRAST, VideoSetting.MAX_CONTRAST, 0.01f, profile.getContrast(), "%.2f", VideoSetting::putContrast);
         setupSlider(binding.brightness, R.string.video_effect_brightness, VideoSetting.MIN_BRIGHTNESS, VideoSetting.MAX_BRIGHTNESS, 0.005f, profile.getBrightness(), "%+.3f", VideoSetting::putBrightness);
@@ -100,16 +99,14 @@ final class VideoSettingPanel {
         setupSlider(binding.shadow, R.string.video_effect_shadow, VideoSetting.MIN_SHADOW, VideoSetting.MAX_SHADOW, 0.01f, profile.getShadowLift(), "%.2f", VideoSetting::putShadow);
     }
 
-    private VideoEffectProfile getDisplayProfile() {
-        return getProfileForPreset(VideoSetting.getPreset());
-    }
-
     private void bindReset() {
         binding.reset.setOnClickListener(this::onReset);
-        binding.reset.setOnLongClickListener(view -> {
-            resetAll();
-            return true;
-        });
+        binding.reset.setOnLongClickListener(this::onResetLong);
+    }
+
+    private boolean onResetLong(View view) {
+        resetAll();
+        return true;
     }
 
     private void onReset(View view) {
@@ -141,6 +138,7 @@ final class VideoSettingPanel {
     private void setupSlider(ViewSettingSliderBinding item, int titleRes, float from, float to, float step, float initial, String format, Consumer<Float> setter) {
         item.title.setText(titleRes);
         Slider slider = item.slider;
+        slider.setContentDescription(item.title.getText());
         float clamped = SliderUtil.snap(initial, from, to, step);
         slider.clearOnChangeListeners();
         slider.setValueFrom(from);
@@ -185,12 +183,8 @@ final class VideoSettingPanel {
         updateControls();
     }
 
-    private VideoEffectProfile getProfileForPreset(int preset) {
-        return preset == VideoEffectPreset.CUSTOM ? VideoSetting.getCustomProfile() : VideoEffectProfile.of(preset);
-    }
-
     private VideoEffectProfile getCurrentProfile() {
-        VideoEffectProfile profile = getDisplayProfile();
+        VideoEffectProfile profile = VideoSetting.getProfile();
         float shadow = isMpv() ? profile.getShadowLift() : binding.shadow.slider.getValue();
         float temperature = isMpv() ? profile.getTemperature() : binding.temperature.slider.getValue();
         float sharpness = supportsSharpness() ? binding.sharpness.slider.getValue() : profile.getSharpness();

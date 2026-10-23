@@ -16,6 +16,8 @@ import java.security.spec.X509EncodedKeySpec;
 import java.util.Base64;
 import java.util.Locale;
 
+import okio.ByteString;
+
 final class NodeManifest {
 
     static final String FILE_NAME = "index.manifest.json";
@@ -41,12 +43,7 @@ final class NodeManifest {
             JsonObject object = Json.parse(text).getAsJsonObject();
             if (object.get("version").getAsInt() != 1) throw new IOException("Unsupported Node manifest version");
             if (!ALGORITHM.equalsIgnoreCase(object.get("algorithm").getAsString())) throw new IOException("Unsupported Node manifest algorithm");
-            String indexSha256 = digest(object, "indexSha256");
-            String configSha256 = digest(object, "configSha256");
-            byte[] publicKey = Base64.getDecoder().decode(object.get("publicKey").getAsString());
-            byte[] signature = Base64.getDecoder().decode(object.get("signature").getAsString());
-            if (publicKey.length == 0 || signature.length == 0) throw new IOException("Node manifest key or signature is empty");
-            return new NodeManifest(text, indexSha256, configSha256, publicKey, signature);
+            return readManifest(text, object);
         } catch (IOException e) {
             throw e;
         } catch (Exception e) {
@@ -54,11 +51,42 @@ final class NodeManifest {
         }
     }
 
+    private static NodeManifest readManifest(String text, JsonObject object) throws IOException {
+        String indexSha256 = digest(object, "indexSha256");
+        String configSha256 = digest(object, "configSha256");
+        byte[] publicKey = Base64.getDecoder().decode(object.get("publicKey").getAsString());
+        byte[] signature = Base64.getDecoder().decode(object.get("signature").getAsString());
+        if (publicKey.length == 0 || signature.length == 0) throw new IOException("Node manifest key or signature is empty");
+        return new NodeManifest(text, indexSha256, configSha256, publicKey, signature);
+    }
+
+    private static void verifyDigest(File file, String expected, String name) throws IOException {
+        if (!MessageDigest.isEqual(expected.getBytes(StandardCharsets.US_ASCII), sha256(file).getBytes(StandardCharsets.US_ASCII))) throw new IOException("Node manifest " + name + " SHA-256 mismatch");
+    }
+
+    static byte[] payload(String indexSha256, String configSha256) {
+        return (DOMAIN + indexSha256.toLowerCase(Locale.ROOT) + "\n" + configSha256.toLowerCase(Locale.ROOT) + "\n").getBytes(StandardCharsets.US_ASCII);
+    }
+
+    static String sha256(File file) throws IOException {
+        return ByteString.of(Crypto.sha256(file)).hex();
+    }
+
+    private static String digest(JsonObject object, String name) throws IOException {
+        String value = object.get(name).getAsString().toLowerCase(Locale.ROOT);
+        if (!value.matches("[a-f0-9]{64}")) throw new IOException("Invalid Node manifest " + name);
+        return value;
+    }
+
     void verify(File index, File config, String trustedFingerprint) throws IOException {
-        if (!MessageDigest.isEqual(indexSha256.getBytes(StandardCharsets.US_ASCII), sha256(index).getBytes(StandardCharsets.US_ASCII))) throw new IOException("Node manifest index SHA-256 mismatch");
-        if (!MessageDigest.isEqual(configSha256.getBytes(StandardCharsets.US_ASCII), sha256(config).getBytes(StandardCharsets.US_ASCII))) throw new IOException("Node manifest config SHA-256 mismatch");
+        verifyDigest(index, indexSha256, "index");
+        verifyDigest(config, configSha256, "config");
         String fingerprint = fingerprint();
         if (!trustedFingerprint.isEmpty() && !MessageDigest.isEqual(trustedFingerprint.getBytes(StandardCharsets.US_ASCII), fingerprint.getBytes(StandardCharsets.US_ASCII))) throw new IOException("Node bundle signing key changed");
+        verifySignature();
+    }
+
+    private void verifySignature() throws IOException {
         try {
             PublicKey key = KeyFactory.getInstance("RSA").generatePublic(new X509EncodedKeySpec(publicKey));
             if (!(key instanceof RSAPublicKey rsa) || rsa.getModulus().bitLength() < 2048) throw new IOException("Node manifest RSA key is too small");
@@ -74,31 +102,10 @@ final class NodeManifest {
     }
 
     String fingerprint() {
-        MessageDigest digest = Crypto.newDigest("SHA-256");
-        return hex(digest.digest(publicKey));
+        return ByteString.of(Crypto.newDigest("SHA-256").digest(publicKey)).hex();
     }
 
     String raw() {
         return raw;
-    }
-
-    static byte[] payload(String indexSha256, String configSha256) {
-        return (DOMAIN + indexSha256.toLowerCase(Locale.ROOT) + "\n" + configSha256.toLowerCase(Locale.ROOT) + "\n").getBytes(StandardCharsets.US_ASCII);
-    }
-
-    static String sha256(File file) throws IOException {
-        return hex(Crypto.sha256(file));
-    }
-
-    private static String digest(JsonObject object, String name) throws IOException {
-        String value = object.get(name).getAsString().toLowerCase(Locale.ROOT);
-        if (!value.matches("[a-f0-9]{64}")) throw new IOException("Invalid Node manifest " + name);
-        return value;
-    }
-
-    private static String hex(byte[] bytes) {
-        StringBuilder builder = new StringBuilder(bytes.length * 2);
-        for (byte value : bytes) builder.append(String.format(Locale.ROOT, "%02x", value & 0xff));
-        return builder.toString();
     }
 }

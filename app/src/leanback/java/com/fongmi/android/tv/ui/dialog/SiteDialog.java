@@ -55,10 +55,6 @@ public class SiteDialog extends BaseAlertDialog implements SiteAdapter.OnClickLi
         return list() ? 1 : Math.clamp((int) Math.ceil((double) adapter.getItemCount() / GRID_COUNT), 2, 3);
     }
 
-    private int getIcon() {
-        return list() ? R.drawable.ic_site_grid : R.drawable.ic_site_list;
-    }
-
     @Override
     protected ViewBinding getBinding() {
         return binding = DialogSiteBinding.inflate(getLayoutInflater());
@@ -108,7 +104,7 @@ public class SiteDialog extends BaseAlertDialog implements SiteAdapter.OnClickLi
     private void setMode() {
         if (adapter.getItemCount() < GRID_COUNT) Setting.putSiteMode(0);
         binding.mode.setEnabled(adapter.getItemCount() >= GRID_COUNT);
-        binding.mode.setImageResource(getIcon());
+        binding.mode.setImageResource(list() ? R.drawable.ic_site_grid : R.drawable.ic_site_list);
         binding.mode.setContentDescription(getString(list() ? R.string.dialog_action_grid : R.string.dialog_action_list));
     }
 

@@ -7,7 +7,11 @@ on:
       - upgrade/official-5.8.0-base
       - fongmi
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
     branches:
       - fongmi
   workflow_dispatch:
@@ -35,7 +39,6 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      # Fix: avoid installing the removed legacy "tools" package.
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
@@ -45,16 +48,22 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           sdkmanager --install \
             "platform-tools" \
-            "platforms;android-37" \
+            "platforms;android-37.0" \
             "build-tools;37.0.0"
+
           yes | sdkmanager --licenses >/dev/null
+
+          echo "Installed Android SDK platforms:"
+          ls -la "$ANDROID_HOME/platforms"
 
       - name: Create temporary CI signing key
         shell: bash
         run: |
           set -euo pipefail
+
           keytool -genkeypair -v \
             -keystore "$RUNNER_TEMP/fongmi-ci.keystore" \
             -storetype JKS \
@@ -66,10 +75,12 @@ jobs:
             -keypass "ci-only-password" \
             -dname "CN=FongMi CI, OU=Build, O=CI, L=CI, ST=CI, C=US"
 
-          printf 'storeFile=%s\nkeyAlias=fongmi-ci\nstorePassword=ci-only-password\n' \
-            "$RUNNER_TEMP/fongmi-ci.keystore" > local.properties
-
-          printf 'sdk.dir=%s\n' "$ANDROID_HOME" >> local.properties
+          {
+            printf 'storeFile=%s\n' "$RUNNER_TEMP/fongmi-ci.keystore"
+            printf 'keyAlias=fongmi-ci\n'
+            printf 'storePassword=ci-only-password\n'
+            printf 'sdk.dir=%s\n' "$ANDROID_HOME"
+          } > local.properties
 
       - name: Verify Gradle wrapper
         shell: bash
@@ -80,11 +91,15 @@ jobs:
 
       - name: Run unit tests
         shell: bash
-        run: ./gradlew --no-daemon --stacktrace :catvod:test
+        run: |
+          set -euo pipefail
+          ./gradlew --no-daemon --stacktrace :catvod:test
 
       - name: Build release APKs
         shell: bash
         run: |
+          set -euo pipefail
+
           ./gradlew --no-daemon --stacktrace \
             :app:assembleLeanbackRelease \
             :app:assembleMobileRelease

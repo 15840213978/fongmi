@@ -6,6 +6,7 @@ on:
     branches:
       - upgrade/official-5.8.0-base
       - fongmi
+
   pull_request:
     types:
       - opened
@@ -14,6 +15,7 @@ on:
       - ready_for_review
     branches:
       - fongmi
+
   workflow_dispatch:
 
 permissions:
@@ -38,6 +40,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
+          cache: gradle
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
@@ -54,10 +57,19 @@ jobs:
             "platforms;android-37.0" \
             "build-tools;37.0.0"
 
-          yes | sdkmanager --licenses >/dev/null
+          # Prevent yes from failing the step when sdkmanager
+          # exits early after all licenses have been accepted.
+          # With pipefail disabled, the pipeline returns the
+          # exit status of sdkmanager, not yes.
+          set +o pipefail
+          yes | sdkmanager --licenses
+          set -o pipefail
 
           echo "Installed Android SDK platforms:"
           ls -la "$ANDROID_HOME/platforms"
+
+          echo "Installed Android SDK build tools:"
+          ls -la "$ANDROID_HOME/build-tools"
 
       - name: Create temporary CI signing key
         shell: bash
@@ -86,6 +98,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           chmod +x ./gradlew
           ./gradlew --version
 
@@ -93,14 +106,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ./gradlew --no-daemon --stacktrace :catvod:test
+
+          ./gradlew \
+            --no-daemon \
+            --stacktrace \
+            :catvod:test
 
       - name: Build release APKs
         shell: bash
         run: |
           set -euo pipefail
 
-          ./gradlew --no-daemon --stacktrace \
+          ./gradlew \
+            --no-daemon \
+            --stacktrace \
             :app:assembleLeanbackRelease \
             :app:assembleMobileRelease
 
@@ -108,7 +127,12 @@ jobs:
         if: always()
         shell: bash
         run: |
-          find app/build/outputs -type f -name '*.apk' -print 2>/dev/null || true
+          echo "Searching for generated APK files..."
+
+          find app/build/outputs \
+            -type f \
+            -name '*.apk' \
+            -print 2>/dev/null || true
 
       - name: Upload APK artifacts
         if: success()

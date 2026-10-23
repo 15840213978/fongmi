@@ -1,3 +1,4 @@
+
 name: Build FongMi 5.8.0 APK
 
 on:
@@ -34,12 +35,20 @@ jobs:
           distribution: temurin
           java-version: '21'
 
+      # Fix: avoid installing the removed legacy "tools" package.
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
 
       - name: Install Android SDK packages
+        shell: bash
         run: |
-          sdkmanager --install "platform-tools" "platforms;android-37" "build-tools;37.0.0"
+          set -euo pipefail
+          sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-37" \
+            "build-tools;37.0.0"
           yes | sdkmanager --licenses >/dev/null
 
       - name: Create temporary CI signing key
@@ -50,23 +59,35 @@ jobs:
             -keystore "$RUNNER_TEMP/fongmi-ci.keystore" \
             -storetype JKS \
             -alias fongmi-ci \
-            -keyalg RSA -keysize 2048 -validity 3650 \
-            -storepass "ci-only-password" -keypass "ci-only-password" \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 3650 \
+            -storepass "ci-only-password" \
+            -keypass "ci-only-password" \
             -dname "CN=FongMi CI, OU=Build, O=CI, L=CI, ST=CI, C=US"
+
           printf 'storeFile=%s\nkeyAlias=fongmi-ci\nstorePassword=ci-only-password\n' \
             "$RUNNER_TEMP/fongmi-ci.keystore" > local.properties
+
           printf 'sdk.dir=%s\n' "$ANDROID_HOME" >> local.properties
 
       - name: Verify Gradle wrapper
+        shell: bash
         run: |
+          set -euo pipefail
           chmod +x ./gradlew
           ./gradlew --version
 
       - name: Run unit tests
-        run: ./gradlew --no-daemon :catvod:test
+        shell: bash
+        run: ./gradlew --no-daemon --stacktrace :catvod:test
 
       - name: Build release APKs
-        run: ./gradlew --no-daemon --stacktrace :app:assembleLeanbackRelease :app:assembleMobileRelease
+        shell: bash
+        run: |
+          ./gradlew --no-daemon --stacktrace \
+            :app:assembleLeanbackRelease \
+            :app:assembleMobileRelease
 
       - name: List APK outputs
         if: always()
@@ -82,5 +103,3 @@ jobs:
           path: app/build/outputs/apk/**/*.apk
           if-no-files-found: error
           retention-days: 14
-
-# Re-submitted to trigger the 5.8.0 build workflow.

@@ -24,6 +24,7 @@ import com.fongmi.android.tv.R;
 import com.fongmi.android.tv.ui.activity.FileActivity;
 import com.github.catvod.utils.Crypto;
 import com.github.catvod.utils.Path;
+import com.github.catvod.utils.Task;
 
 import java.io.File;
 import java.io.IOException;
@@ -57,7 +58,7 @@ public final class FileChooser {
 
     public void show(String mimeType, String[] mimeTypes) {
         Intent intent = createIntent(mimeType, mimeTypes);
-        launcher.launch(useInternal(intent) ? intent.setClass(App.get(), FileActivity.class) : Intent.createChooser(intent, ""));
+        launcher.launch(useInternal(intent) ? intent.setClass(App.get(), FileActivity.class) : intent);
     }
 
     private static Intent createIntent(String mimeType, String[] mimeTypes) {
@@ -73,8 +74,7 @@ public final class FileChooser {
     private static boolean useInternal(Intent intent) {
         if (Util.isLeanback()) return true;
         List<ResolveInfo> resolveInfos = App.get().getPackageManager().queryIntentActivities(intent, PackageManager.MATCH_DEFAULT_ONLY);
-        for (ResolveInfo resolveInfo : resolveInfos) if (isUsable(resolveInfo)) return false;
-        return true;
+        return resolveInfos.stream().noneMatch(FileChooser::isUsable);
     }
 
     private static boolean isUsable(ResolveInfo resolveInfo) {
@@ -87,28 +87,43 @@ public final class FileChooser {
     }
 
     public static void getUri(@Nullable Intent data, Consumer<Uri> callback) {
-        getFileUri(data == null ? null : data.getData(), callback);
+        Uri uri = data == null ? null : data.getData();
+        if (isFileSource(uri) && persistReadPermission(data, uri)) callback.accept(uri);
+    }
+
+    public static boolean persistReadPermission(@Nullable Intent data, Uri uri) {
+        int grants = Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION;
+        if (data == null || !ContentResolver.SCHEME_CONTENT.equalsIgnoreCase(uri.getScheme()) || (data.getFlags() & grants) != grants) return true;
+        try {
+            App.get().getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        } catch (SecurityException | IllegalArgumentException e) {
+            Notify.show(Notify.getError(R.string.error_file_open, e));
+            return false;
+        }
+        return true;
+    }
+
+    public static void getFileUri(ActivityResult result, Consumer<Uri> callback) {
+        if (result.getResultCode() == Activity.RESULT_OK && result.getData() != null) getFileUri(result.getData().getData(), callback);
     }
 
     public static void getFileUri(@Nullable Uri uri, Consumer<Uri> callback) {
-        getFileUri(uri, callback, null);
+        getFileUri(uri, callback, () -> {});
     }
 
-    public static void getFileUri(@Nullable Uri uri, Consumer<Uri> callback, @Nullable Runnable onError) {
-        if (!isFileSource(uri)) {
-            if (onError != null) App.post(onError);
-            return;
-        }
-        Task.execute(() -> resolveFileUri(uri, callback, onError));
+    public static void getFileUri(@Nullable Uri uri, Consumer<Uri> callback, Runnable onFailure) {
+        if (!isFileSource(uri)) return;
+        Task.execute(() -> resolveFileUri(uri, callback, onFailure));
     }
 
-    private static void resolveFileUri(Uri uri, Consumer<Uri> callback, @Nullable Runnable onError) {
+    private static void resolveFileUri(Uri uri, Consumer<Uri> callback, Runnable onFailure) {
         try {
-            deliver(callback, resolveFileUri(uri));
-        } catch (IOException | SecurityException e) {
+            Uri file = resolveFileUri(uri);
+            App.post(() -> callback.accept(file));
+        } catch (IOException | SecurityException | IllegalArgumentException e) {
             App.post(() -> {
-                Notify.show(e.getMessage());
-                if (onError != null) onError.run();
+                Notify.show(Notify.getError(R.string.error_file_open, e));
+                onFailure.run();
             });
         }
     }
@@ -116,10 +131,6 @@ public final class FileChooser {
     private static Uri resolveFileUri(Uri uri) throws IOException {
         File file = getLocalFile(uri);
         return file == null ? materialize(uri, getCacheFile(uri)) : Uri.fromFile(file);
-    }
-
-    private static void deliver(Consumer<Uri> callback, Uri uri) {
-        App.post(() -> callback.accept(uri));
     }
 
     @Nullable
@@ -214,7 +225,7 @@ public final class FileChooser {
     }
 
     private static Uri materialize(Uri uri, File target) throws IOException {
-        FileUtil.copyAtomically(uri, target);
+        Path.writeAtomically(target, uri);
         return Uri.fromFile(target);
     }
 
@@ -236,13 +247,15 @@ public final class FileChooser {
         return ContentResolver.SCHEME_CONTENT.equalsIgnoreCase(scheme) || ContentResolver.SCHEME_FILE.equalsIgnoreCase(scheme);
     }
 
-    public static boolean isLiveSource(Intent intent) {
-        String type = intent.getType();
-        if ("application/vnd.apple.mpegurl".equalsIgnoreCase(type) || "application/x-mpegurl".equalsIgnoreCase(type) || "audio/x-mpegurl".equalsIgnoreCase(type)) return true;
-        Uri uri = intent.getData();
-        String name = uri == null ? null : uri.getLastPathSegment();
-        if (name == null) return false;
-        name = name.toLowerCase(Locale.ROOT);
-        return name.endsWith(".m3u") || name.endsWith(".m3u8");
+    public static boolean isLiveSource(@Nullable Intent intent) {
+        if (intent == null || !isFileSource(intent.getData())) return false;
+        String path = FileUtil.getDisplayName(intent.getData()).toLowerCase(Locale.ROOT);
+        if (path.endsWith(".m3u")) return true;
+        if (!"text/plain".equalsIgnoreCase(intent.getType())) return false;
+        String extension = path.substring(path.lastIndexOf('.') + 1);
+        return switch (extension) {
+            case "strm", "m3u8", "mpd", "torrent", "mp4", "mkv", "flv", "mp3", "m4a", "aac", "ts", "webm", "mov", "avi", "wav", "ogg", "wmv", "iso", "m2ts" -> false;
+            default -> true;
+        };
     }
 }

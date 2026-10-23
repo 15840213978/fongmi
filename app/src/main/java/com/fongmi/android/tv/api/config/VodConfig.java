@@ -3,7 +3,6 @@ package com.fongmi.android.tv.api.config;
 import android.text.TextUtils;
 
 import com.fongmi.android.tv.App;
-import com.fongmi.android.tv.api.Decoder;
 import com.fongmi.android.tv.api.loader.BaseLoader;
 import com.fongmi.android.tv.api.node.NodeRuntime;
 import com.fongmi.android.tv.bean.Config;
@@ -15,11 +14,11 @@ import com.fongmi.android.tv.event.ConfigEvent;
 import com.fongmi.android.tv.event.RefreshEvent;
 import com.fongmi.android.tv.impl.Callback;
 import com.fongmi.android.tv.utils.UrlUtil;
-import com.fongmi.nodejs.NodeBundle;
-import com.fongmi.nodejs.NodeClient;
 import com.github.catvod.bean.Doh;
 import com.github.catvod.bean.Header;
 import com.github.catvod.bean.Proxy;
+import com.github.catvod.runtime.NodeRuntimeApi;
+import com.github.catvod.utils.Decoder;
 import com.github.catvod.utils.Json;
 import com.google.gson.JsonObject;
 
@@ -119,10 +118,10 @@ public class VodConfig extends BaseConfig {
 
     @Override
     protected void load(Config config) throws Throwable {
-        boolean node = NodeBundle.isConfig(config.getUrl());
+        boolean node = NodeRuntime.isConfig(config.getUrl());
         NodeRuntime runtime = NodeRuntime.get();
         if (!node) runtime.clear();
-        NodeClient.LoadedConfig loaded = null;
+        NodeRuntimeApi.LoadedConfig loaded = null;
         try {
             if (node) loaded = runtime.loadConfig(config.getUrl());
             String json = node ? loaded.json() : Decoder.getJson(UrlUtil.convert(config.getUrl()), TAG);
@@ -139,7 +138,7 @@ public class VodConfig extends BaseConfig {
         return !getSites().isEmpty();
     }
 
-    private void checkJson(Config config, JsonObject object, NodeClient.LoadedConfig loaded) throws Throwable {
+    private void checkJson(Config config, JsonObject object, NodeRuntimeApi.LoadedConfig loaded) throws Throwable {
         if (object.has("msg")) throw new Exception(object.get("msg").getAsString());
         if (object.has("urls")) {
             List<Depot> items = Depot.arrayFrom(object.getAsJsonArray("urls").toString());

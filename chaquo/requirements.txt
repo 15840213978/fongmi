@@ -1,8 +1,0 @@
-lxml
-ujson
-pyquery
-requests
-cachetools
-pycryptodome
-pywasm==0.4.8
-beautifulsoup4

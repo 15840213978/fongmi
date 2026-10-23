@@ -1,6 +1,7 @@
 package com.fongmi.android.tv.player.mpv;
 
 import androidx.media3.common.Format;
+import androidx.media3.common.audio.AudioEffectParameters;
 import androidx.media3.mpvplayer.MpvPlayer;
 import androidx.media3.mpvplayer.audio.MpvAudioFilter;
 
@@ -100,13 +101,13 @@ public final class MpvPlayerEffect implements PlayerEffect {
         return previewVideoEffect ? VideoEffectProfile.off() : VideoSetting.getAppliedProfile();
     }
 
-    private AudioEffectConfig getAudioConfig(int channelCount) {
-        return previewAudioEffect ? AudioEffectConfig.disabled() : AudioEffectConfig.from(getAudioEffectBands(), channelCount);
+    private AudioEffectParameters getAudioConfig(int channelCount) {
+        return previewAudioEffect ? AudioEffectParameters.DEFAULT : AudioEffectConfig.from(getAudioEffectBands(), channelCount);
     }
 
     private void applyAudioConfig(int channelCount) {
         if (channelCount == Format.NO_VALUE) return;
-        AudioEffectConfig config = getAudioConfig(channelCount);
+        AudioEffectParameters config = getAudioConfig(channelCount);
         audioEffectFailed = !player.setAudioFilter(MpvAudioEffectFilter.create(config, channelCount));
     }
 }

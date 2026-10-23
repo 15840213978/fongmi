@@ -20,7 +20,6 @@ import com.fongmi.android.tv.ui.custom.SpaceItemDecoration;
 
 public final class ChapterDialog extends BaseBottomSheetDialog implements ChapterAdapter.OnClickListener {
 
-    private ChapterAdapter adapter;
     private DialogChapterBinding binding;
     private PlayerManager player;
 
@@ -46,18 +45,21 @@ public final class ChapterDialog extends BaseBottomSheetDialog implements Chapte
         binding.recycler.setHasFixedSize(true);
         binding.recycler.addItemDecoration(new SpaceItemDecoration(1, 16));
         binding.title.setText(R.string.dialog_select_chapter);
-        PlaybackDialog.observe(this, player -> {
-            this.player = player;
-            if (player == null) return;
-            adapter = new ChapterAdapter(this);
-            binding.recycler.setAdapter(adapter.addAll(player.getCurrentMediaChapters()));
-            binding.recycler.scrollToPosition(adapter.getSelected());
-            binding.recycler.setVisibility(adapter.getItemCount() == 0 ? View.GONE : View.VISIBLE);
-        });
+        PlaybackDialog.observe(this, this::bindPlayer);
+    }
+
+    private void bindPlayer(PlayerManager player) {
+        this.player = player;
+        if (player == null) return;
+        ChapterAdapter adapter = new ChapterAdapter(this);
+        binding.recycler.setAdapter(adapter.addAll(player.getCurrentMediaChapters()));
+        binding.recycler.scrollToPosition(adapter.getSelected());
+        binding.recycler.setVisibility(adapter.getItemCount() == 0 ? View.GONE : View.VISIBLE);
     }
 
     @Override
     public void onItemClick(MediaChapter item) {
+        if (!PlaybackDialog.isCurrentPlayer(this, player)) return;
         player.selectChapter(item);
         dismiss();
     }
@@ -65,7 +67,6 @@ public final class ChapterDialog extends BaseBottomSheetDialog implements Chapte
     @Override
     public void onDestroyView() {
         binding = null;
-        adapter = null;
         player = null;
         super.onDestroyView();
     }

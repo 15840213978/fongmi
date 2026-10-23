@@ -16,10 +16,10 @@ import com.fongmi.android.tv.api.loader.BaseLoader;
 import com.fongmi.android.tv.db.AppDatabase;
 import com.fongmi.android.tv.gson.ExtAdapter;
 import com.fongmi.android.tv.gson.HeaderAdapter;
-import com.fongmi.android.tv.utils.Task;
 import com.fongmi.android.tv.utils.UrlUtil;
 import com.github.catvod.crawler.Spider;
 import com.github.catvod.net.OkHttp;
+import com.github.catvod.utils.Task;
 import com.github.catvod.utils.Trans;
 import com.google.gson.JsonElement;
 import com.google.gson.annotations.JsonAdapter;
@@ -359,14 +359,16 @@ public class Site implements Parcelable {
 
     public static void saveSettings(List<Site> items) {
         List<Site> snapshots = new ArrayList<>(items.size());
-        for (Site item : items) {
-            Site snapshot = new Site();
-            snapshot.key = item.key;
-            snapshot.searchable = item.searchable;
-            snapshot.changeable = item.changeable;
-            snapshots.add(snapshot);
-        }
+        for (Site item : items) snapshots.add(item.snapshot());
         Task.executeSerial(() -> AppDatabase.get().getSiteDao().insertOrUpdate(snapshots));
+    }
+
+    private Site snapshot() {
+        Site item = new Site();
+        item.key = key;
+        item.searchable = searchable;
+        item.changeable = changeable;
+        return item;
     }
 
     @Override

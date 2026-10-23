@@ -4,9 +4,11 @@ import android.content.Context;
 import android.net.Uri;
 
 import com.github.catvod.crawler.SpiderDebug;
+import com.github.catvod.net.Download;
 import com.github.catvod.net.OkHttp;
 import com.github.catvod.utils.Crypto;
 import com.github.catvod.utils.Path;
+import com.github.catvod.utils.UriUtil;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -44,6 +46,8 @@ public final class NodeBundle {
     private static final int MAX_MANIFEST_BYTES = 32 * 1024;
     private static final String PENDING = ".pending";
     private static final String TRUSTED_KEY = "trusted-key.sha256";
+    private static final String HEALTH_INDEX = "module.exports = { start() { global.catServerFactory((req, res) => { req.resume(); res.writeHead(404); res.end(); }).listen(0); } };";
+    private static final String HEALTH_CONFIG = "module.exports = {};";
     private static final OkHttpClient CLIENT = OkHttp.client().newBuilder().connectTimeout(30, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).writeTimeout(30, TimeUnit.SECONDS).followSslRedirects(false).build();
     private static final Map<String, Object> SOURCE_LOCKS = new ConcurrentHashMap<>();
     private static final AtomicReference<LoadSession> ACTIVE_LOAD = new AtomicReference<>();
@@ -73,7 +77,7 @@ public final class NodeBundle {
     public static boolean isConfig(String url) {
         if (url == null) return false;
         if (url.regionMatches(true, 0, "content://", 0, 10)) return false;
-        String value = withoutSuffix(url);
+        String value = UriUtil.stripQueryAndFragment(url);
         try {
             value = URLDecoder.decode(value, StandardCharsets.UTF_8);
         } catch (IllegalArgumentException ignored) {
@@ -98,6 +102,13 @@ public final class NodeBundle {
         }
     }
 
+    static NodeBundle prepareHealth(Context context) throws IOException {
+        File root = new File(context.getFilesDir(), "nodejs/probes/health/active");
+        Path.writeAtomically(new File(root, "index.js"), HEALTH_INDEX.getBytes(StandardCharsets.UTF_8));
+        Path.writeAtomically(new File(root, "index.config.js"), HEALTH_CONFIG.getBytes(StandardCharsets.UTF_8));
+        return new NodeBundle(root, Crypto.md5(HEALTH_INDEX), Crypto.md5(HEALTH_CONFIG));
+    }
+
     private static NodeBundle prepare(Context context, String source, String key, LoadSession session) throws Exception {
         File sourceRoot = new File(context.getFilesDir(), "nodejs/bundles/" + key);
         File active = new File(sourceRoot, "active");
@@ -120,19 +131,12 @@ public final class NodeBundle {
         File staging = new File(sourceRoot, "staging-" + UUID.randomUUID());
         try {
             if (!staging.mkdirs() && !staging.isDirectory()) throw new IOException("Unable to create Node staging directory");
-            File index = copy(indexLocation, new File(staging, "index.js"), MAX_INDEX_BYTES, session);
-            File config = copy(configLocation, new File(staging, "index.config.js"), MAX_CONFIG_BYTES, session);
+            File index = copy(indexLocation, new File(staging, "index.js"), MAX_INDEX_BYTES, new File(sourceRoot, ".downloads"), session);
+            File config = copy(configLocation, new File(staging, "index.config.js"), MAX_CONFIG_BYTES, new File(sourceRoot, ".downloads"), session);
             if (!Crypto.equals(index, indexMd5)) throw new IOException("index.js MD5 mismatch");
             if (!Crypto.equals(config, configMd5)) throw new IOException("index.config.js MD5 mismatch");
-            String signingKey = "";
-            if (manifest != null) {
-                manifest.verify(index, config, trustedKey);
-                signingKey = manifest.fingerprint();
-                writeAtomically(manifest.raw().getBytes(StandardCharsets.UTF_8), new File(staging, NodeManifest.FILE_NAME));
-            }
-            writeAtomically((indexMd5 + "\n").getBytes(StandardCharsets.US_ASCII), new File(staging, "index.js.md5"));
-            writeAtomically((configMd5 + "\n").getBytes(StandardCharsets.US_ASCII), new File(staging, "index.config.js.md5"));
-            writeAtomically(version(indexMd5, configMd5).getBytes(StandardCharsets.US_ASCII), new File(staging, PENDING));
+            String signingKey = verifyStagedManifest(manifest, index, config, trustedKey, staging);
+            writeSidecars(staging, indexMd5, configMd5);
             session.check();
             commit(active, staging);
             session.check();
@@ -187,84 +191,140 @@ public final class NodeBundle {
         return matcher.group(1).toLowerCase(Locale.ROOT);
     }
 
+    private static String verifyStagedManifest(NodeManifest manifest, File index, File config, String trustedKey, File staging) throws IOException {
+        if (manifest == null) return "";
+        manifest.verify(index, config, trustedKey);
+        String signingKey = manifest.fingerprint();
+        Path.writeAtomically(new File(staging, NodeManifest.FILE_NAME), manifest.raw().getBytes(StandardCharsets.UTF_8));
+        return signingKey;
+    }
+
+    private static void writeSidecars(File staging, String indexMd5, String configMd5) throws IOException {
+        Path.writeAtomically(new File(staging, "index.js.md5"), (indexMd5 + "\n").getBytes(StandardCharsets.US_ASCII));
+        Path.writeAtomically(new File(staging, "index.config.js.md5"), (configMd5 + "\n").getBytes(StandardCharsets.US_ASCII));
+        Path.writeAtomically(new File(staging, PENDING), version(indexMd5, configMd5).getBytes(StandardCharsets.US_ASCII));
+    }
+
     private static String readLimited(InputStream input, int limit, LoadSession session, String name) throws IOException {
         try (InputStream stream = input; ByteArrayOutputStream output = new ByteArrayOutputStream()) {
-            byte[] buffer = new byte[512];
-            int total = 0;
-            int count;
-            while ((count = stream.read(buffer)) != -1) {
-                session.check();
-                total += count;
-                if (total > limit) throw new IOException(name + " is too large");
-                output.write(buffer, 0, count);
-            }
+            copySidecar(stream, output, limit, session, name);
             return output.toString(StandardCharsets.UTF_8.name());
         }
     }
 
-    private static File copy(String location, File target, long maxBytes, LoadSession session) throws IOException {
-        try (Resource resource = open(location, session, false)) {
-            if (resource.length > maxBytes) throw new IOException("Node bundle file is too large");
-            File parent = target.getParentFile();
-            if (parent == null || (!parent.isDirectory() && !parent.mkdirs() && !parent.isDirectory())) throw new IOException("Unable to create Node staging directory");
-            try (FileOutputStream output = new FileOutputStream(target)) {
-                byte[] buffer = new byte[64 * 1024];
-                long total = 0;
-                int count;
-                while ((count = resource.input.read(buffer)) != -1) {
-                    session.check();
-                    total += count;
-                    if (total > maxBytes) throw new IOException("Node bundle file is too large");
-                    output.write(buffer, 0, count);
-                }
-                if (total == 0) throw new IOException("Empty Node bundle file");
-                output.flush();
-                output.getFD().sync();
-            } catch (IOException e) {
-                Path.clear(target);
-                throw e;
-            }
-            return target;
+    private static void copySidecar(InputStream input, ByteArrayOutputStream output, int limit, LoadSession session, String name) throws IOException {
+        byte[] buffer = new byte[512];
+        int total = 0;
+        int count;
+        while ((count = input.read(buffer)) != -1) {
+            session.check();
+            total += count;
+            if (total > limit) throw new IOException(name + " is too large");
+            output.write(buffer, 0, count);
         }
+    }
+
+    private static File copy(String location, File target, long maxBytes, File downloads, LoadSession session) throws IOException {
+        session.check();
+        if (isRemote(location)) return downloadFile(location, target, maxBytes, downloads, session);
+        try (Resource resource = open(location, session, false)) {
+            return copyResource(resource, target, maxBytes, session);
+        }
+    }
+
+    private static File downloadFile(String location, File target, long maxBytes, File downloads, LoadSession session) throws IOException {
+        try (Download download = new Download(new Request.Builder().url(location).build(), target).directory(downloads).maxBytes(maxBytes).strictStatus(false)) {
+            session.attach(download);
+            try {
+                writeDownload(download, session);
+                return target;
+            } finally {
+                session.detach(download);
+            }
+        }
+    }
+
+    private static void writeDownload(Download download, LoadSession session) throws IOException {
+        Call call = CLIENT.newCall(download.request(CLIENT));
+        session.attach(call);
+        try {
+            download.write(call, call.execute(), null);
+            session.check();
+        } catch (IOException e) {
+            session.check(e);
+            throw e;
+        } finally {
+            session.detach(call);
+        }
+    }
+
+    private static File copyResource(Resource resource, File target, long maxBytes, LoadSession session) throws IOException {
+        if (resource.length > maxBytes) throw new IOException("Node bundle file is too large");
+        File parent = target.getParentFile();
+        if (parent == null || (!parent.isDirectory() && !parent.mkdirs() && !parent.isDirectory())) throw new IOException("Unable to create Node staging directory");
+        try (FileOutputStream output = new FileOutputStream(target)) {
+            copyPayload(resource.input, output, maxBytes, session);
+            output.flush();
+            output.getFD().sync();
+        } catch (IOException e) {
+            Path.clear(target);
+            throw e;
+        }
+        return target;
+    }
+
+    private static void copyPayload(InputStream input, FileOutputStream output, long maxBytes, LoadSession session) throws IOException {
+        byte[] buffer = new byte[64 * 1024];
+        long total = 0;
+        int count;
+        while ((count = input.read(buffer)) != -1) {
+            session.check();
+            total += count;
+            if (total > maxBytes) throw new IOException("Node bundle file is too large");
+            output.write(buffer, 0, count);
+        }
+        if (total == 0) throw new IOException("Empty Node bundle file");
     }
 
     private static Resource open(String location, LoadSession session, boolean optional) throws IOException {
         session.check();
-        if (isRemote(location)) {
-            Call call = CLIENT.newCall(new Request.Builder().url(location).build());
-            session.attach(call);
-            Response response = null;
-            try {
-                response = call.execute();
-                session.check();
-                if (optional && (response.code() == 404 || response.code() == 410)) {
-                    response.close();
-                    session.detach(call);
-                    return null;
-                }
-                ResponseBody body = response.body();
-                if (!response.isSuccessful() || body == null) {
-                    int code = response.code();
-                    String url = response.request().url().redact();
-                    throw new IOException("HTTP " + code + " for " + url);
-                }
-                return new Resource(body.byteStream(), body.contentLength(), response, session, call);
-            } catch (IOException e) {
-                if (response != null) response.close();
-                session.detach(call);
-                session.check(e);
-                throw e;
-            }
-        }
+        if (isRemote(location)) return openRemote(location, session, optional);
         File file = localFile(location);
         if (file.isFile() && file.canRead()) return new Resource(new FileInputStream(file), file.length(), null, null, null);
         if (optional) return null;
         throw new IOException("Unable to read Node file: " + file);
     }
 
+    private static Resource openRemote(String location, LoadSession session, boolean optional) throws IOException {
+        Call call = CLIENT.newCall(new Request.Builder().url(location).build());
+        session.attach(call);
+        Response response = null;
+        try {
+            response = call.execute();
+            session.check();
+            if (optional && (response.code() == 404 || response.code() == 410)) {
+                response.close();
+                session.detach(call);
+                return null;
+            }
+            ResponseBody body = response.body();
+            if (!response.isSuccessful()) {
+                int code = response.code();
+                String url = response.request().url().redact();
+                throw new IOException("HTTP " + code + " for " + url);
+            }
+            return new Resource(body.byteStream(), body.contentLength(), response, session, call);
+        } catch (IOException e) {
+            if (response != null) response.close();
+            session.detach(call);
+            session.check(e);
+            throw e;
+        }
+    }
+
     static File localFile(String location) throws IOException {
-        if (!location.regionMatches(true, 0, "file://", 0, 7)) return new File(withoutSuffix(location)).getCanonicalFile();
-        String value = Uri.decode(withoutSuffix(location).substring(7));
+        if (!location.regionMatches(true, 0, "file://", 0, 7)) return new File(UriUtil.stripQueryAndFragment(location)).getCanonicalFile();
+        String value = Uri.decode(UriUtil.stripQueryAndFragment(location).substring(7));
         if (value.startsWith("/")) return new File(value).getCanonicalFile();
         File root = Path.root().getCanonicalFile();
         File file = new File(root, value).getCanonicalFile();
@@ -348,23 +408,6 @@ public final class NodeBundle {
         }
     }
 
-    synchronized void accept() throws IOException {
-        if (!pending) return;
-        File parent = root.getParentFile();
-        if (parent != null && !signingKey.isEmpty()) {
-            String trustedKey = readTrustedKey(parent);
-            if (!trustedKey.isEmpty() && !trustedKey.equals(signingKey)) throw new IOException("Node bundle signing key changed");
-            if (trustedKey.isEmpty()) writeAtomically((signingKey + "\n").getBytes(StandardCharsets.US_ASCII), new File(parent, TRUSTED_KEY));
-        }
-        File marker = new File(root, PENDING);
-        Path.clear(marker);
-        pending = marker.exists();
-        if (pending) return;
-        if (parent != null) {
-            pruneSourceRoot(parent);
-        }
-    }
-
     public static synchronized void prune(Context context, Iterable<String> sources, String currentSource) {
         File bundles = new File(context.getFilesDir(), "nodejs/bundles");
         Set<String> keep = new HashSet<>();
@@ -390,9 +433,11 @@ public final class NodeBundle {
 
     private static void pruneDataRoots(File bundles, Set<File> keep) {
         File[] data = new File(bundles.getParentFile(), "data").listFiles();
-        if (data != null) for (File file : data) {
-            String name = file.getName();
-            if (name.startsWith("staging-") || name.matches("[A-Za-z0-9_-]{43}") && !keep.contains(file)) Path.clear(file);
+        if (data != null) {
+            for (File file : data) {
+                String name = file.getName();
+                if (name.startsWith("staging-") || name.matches("[A-Za-z0-9_-]{43}") && !keep.contains(file)) Path.clear(file);
+            }
         }
     }
 
@@ -401,10 +446,12 @@ public final class NodeBundle {
         addStoredData(keepData, new File(sourceRoot, "active"));
         addStoredData(keepData, new File(sourceRoot, "previous"));
         File[] files = sourceRoot.listFiles();
-        if (files != null) for (File file : files) {
-            String name = file.getName();
-            if (name.startsWith("staging-") || name.startsWith("failed-")) Path.clear(file);
-            else if (!keepData.isEmpty() && name.startsWith("data-") && !keepData.contains(file)) Path.clear(file);
+        if (files != null) {
+            for (File file : files) {
+                String name = file.getName();
+                if (name.startsWith("staging-") || name.startsWith("failed-")) Path.clear(file);
+                else if (!keepData.isEmpty() && name.startsWith("data-") && !keepData.contains(file)) Path.clear(file);
+            }
         }
         return keepData;
     }
@@ -419,21 +466,80 @@ public final class NodeBundle {
         keep.add(dataDirectory(sourceRoot, indexMd5, configMd5));
     }
 
-    private static void writeAtomically(byte[] data, File target) throws IOException {
-        File parent = target.getAbsoluteFile().getParentFile();
-        if (parent == null) throw new IOException("Node file has no parent directory");
-        if (!parent.isDirectory() && !parent.mkdirs() && !parent.isDirectory()) throw new IOException("Unable to create Node file directory");
-        File staging = new File(parent, target.getName() + ".tmp-" + UUID.randomUUID());
+    static File dataDirectory(File sourceRoot, String indexMd5, String configMd5) {
+        File pool = new File(sourceRoot.getParentFile().getParentFile(), "data");
+        byte[] identity = (sourceRoot.getName() + "\n" + version(indexMd5, configMd5)).getBytes(StandardCharsets.UTF_8);
+        byte[] digest = Crypto.newDigest("SHA-256").digest(identity);
+        return new File(pool, Base64.getUrlEncoder().withoutPadding().encodeToString(digest));
+    }
+
+    private static void seedPreviousData(File parent, File target) throws IOException {
+        NodeBundle stored = readStored(new File(parent, "previous"));
+        File source = stored == null ? null : dataDirectory(parent, stored.indexMd5, stored.configMd5);
+        if (stored != null && !source.isDirectory()) source = new File(parent, dataDirectoryName(stored.indexMd5, stored.configMd5));
+        if (source == null || !source.isDirectory()) source = new File(parent, "data");
+        if (!source.isDirectory()) return;
+        File staging = new File(target.getParentFile(), "staging-" + UUID.randomUUID());
         try {
-            try (FileOutputStream output = new FileOutputStream(staging)) {
-                output.write(data);
-                output.flush();
-                output.getFD().sync();
-            }
-            Path.move(staging, target);
+            copyDirectory(source, staging, source.getCanonicalFile(), new HashSet<>());
+            if (!staging.renameTo(target)) throw new IOException("Unable to promote Node data directory");
         } finally {
             Path.clear(staging);
         }
+    }
+
+    private static void copyDirectory(File source, File target, File root, Set<String> visited) throws IOException {
+        File canonical = source.getCanonicalFile();
+        String rootPath = root.getPath();
+        if (!canonical.equals(root) && !canonical.getPath().startsWith(rootPath + File.separator)) throw new IOException("Node data link escapes its directory");
+        if (!visited.add(canonical.getPath())) throw new IOException("Node data contains a directory cycle");
+        if (!target.isDirectory() && !target.mkdirs() && !target.isDirectory()) throw new IOException("Unable to create Node data staging directory");
+        File[] children = source.listFiles();
+        if (children == null) throw new IOException("Unable to list Node data directory");
+        for (File child : children) {
+            File output = new File(target, child.getName());
+            if (child.isDirectory()) copyDirectory(child, output, root, visited);
+            else if (child.isFile()) copyDataFile(child, output, root);
+        }
+    }
+
+    private static void copyDataFile(File source, File target, File root) throws IOException {
+        File canonical = source.getCanonicalFile();
+        String rootPath = root.getPath();
+        if (!canonical.getPath().startsWith(rootPath + File.separator)) throw new IOException("Node data link escapes its directory");
+        try (InputStream input = new FileInputStream(canonical); FileOutputStream output = new FileOutputStream(target)) {
+            copyData(input, output);
+            output.flush();
+            output.getFD().sync();
+        }
+    }
+
+    private static void copyData(InputStream input, FileOutputStream output) throws IOException {
+        byte[] buffer = new byte[64 * 1024];
+        int count;
+        while ((count = input.read(buffer)) != -1) {
+            if (Thread.currentThread().isInterrupted()) throw new InterruptedIOException("Node data migration canceled");
+            output.write(buffer, 0, count);
+        }
+    }
+
+    static String dataDirectoryName(String indexMd5, String configMd5) {
+        return "data-" + Crypto.sha256(version(indexMd5, configMd5));
+    }
+
+    synchronized void accept() throws IOException {
+        if (!pending) return;
+        File parent = root.getParentFile();
+        if (parent != null && !signingKey.isEmpty()) {
+            String trustedKey = readTrustedKey(parent);
+            if (!trustedKey.isEmpty() && !trustedKey.equals(signingKey)) throw new IOException("Node bundle signing key changed");
+            if (trustedKey.isEmpty()) Path.writeAtomically(new File(parent, TRUSTED_KEY), (signingKey + "\n").getBytes(StandardCharsets.US_ASCII));
+        }
+        File marker = new File(root, PENDING);
+        Path.clear(marker);
+        pending = marker.exists();
+        if (pending) return;
+        if (parent != null) pruneSourceRoot(parent);
     }
 
     public File getRoot() {
@@ -479,99 +585,19 @@ public final class NodeBundle {
         return target;
     }
 
-    static File dataDirectory(File sourceRoot, String indexMd5, String configMd5) {
-        File pool = new File(sourceRoot.getParentFile().getParentFile(), "data");
-        byte[] identity = (sourceRoot.getName() + "\n" + version(indexMd5, configMd5)).getBytes(StandardCharsets.UTF_8);
-        byte[] digest = Crypto.newDigest("SHA-256").digest(identity);
-        return new File(pool, Base64.getUrlEncoder().withoutPadding().encodeToString(digest));
-    }
-
-    private static void seedPreviousData(File parent, File target) throws IOException {
-        NodeBundle stored = readStored(new File(parent, "previous"));
-        File source = stored == null ? null : dataDirectory(parent, stored.indexMd5, stored.configMd5);
-        if (stored != null && !source.isDirectory()) source = new File(parent, dataDirectoryName(stored.indexMd5, stored.configMd5));
-        if (source == null || !source.isDirectory()) source = new File(parent, "data");
-        if (!source.isDirectory()) return;
-        File staging = new File(target.getParentFile(), "staging-" + UUID.randomUUID());
-        try {
-            copyDirectory(source, staging, source.getCanonicalFile(), new HashSet<>());
-            if (!staging.renameTo(target)) throw new IOException("Unable to promote Node data directory");
-        } finally {
-            Path.clear(staging);
-        }
-    }
-
-    private static void copyDirectory(File source, File target, File root, Set<String> visited) throws IOException {
-        File canonical = source.getCanonicalFile();
-        String rootPath = root.getPath();
-        if (!canonical.equals(root) && !canonical.getPath().startsWith(rootPath + File.separator)) throw new IOException("Node data link escapes its directory");
-        if (!visited.add(canonical.getPath())) throw new IOException("Node data contains a directory cycle");
-        if (!target.isDirectory() && !target.mkdirs() && !target.isDirectory()) throw new IOException("Unable to create Node data staging directory");
-        File[] children = source.listFiles();
-        if (children == null) throw new IOException("Unable to list Node data directory");
-        for (File child : children) {
-            File output = new File(target, child.getName());
-            if (child.isDirectory()) copyDirectory(child, output, root, visited);
-            else if (child.isFile()) copyDataFile(child, output, root);
-        }
-    }
-
-    private static void copyDataFile(File source, File target, File root) throws IOException {
-        File canonical = source.getCanonicalFile();
-        String rootPath = root.getPath();
-        if (!canonical.getPath().startsWith(rootPath + File.separator)) throw new IOException("Node data link escapes its directory");
-        try (InputStream input = new FileInputStream(canonical); FileOutputStream output = new FileOutputStream(target)) {
-            byte[] buffer = new byte[64 * 1024];
-            int count;
-            while ((count = input.read(buffer)) != -1) {
-                if (Thread.currentThread().isInterrupted()) throw new InterruptedIOException("Node data migration canceled");
-                output.write(buffer, 0, count);
-            }
-            output.flush();
-            output.getFD().sync();
-        }
-    }
-
-    static String dataDirectoryName(String indexMd5, String configMd5) {
-        return "data-" + Crypto.sha256(version(indexMd5, configMd5));
-    }
-
     boolean isSameVersion(NodeBundle other) {
         return other != null && root.equals(other.root) && indexMd5.equals(other.indexMd5) && configMd5.equals(other.configMd5);
     }
 
-    private boolean matches(String otherIndexMd5, String otherConfigMd5) {
-        return indexMd5.equals(otherIndexMd5) && configMd5.equals(otherConfigMd5);
+    private boolean matches(String indexMd5, String configMd5) {
+        return this.indexMd5.equals(indexMd5) && this.configMd5.equals(configMd5);
     }
 
     boolean isPending() {
         return pending;
     }
 
-    private static String withoutSuffix(String source) {
-        int end = source.length();
-        int query = source.indexOf('?');
-        int fragment = source.indexOf('#');
-        if (query >= 0) end = Math.min(end, query);
-        if (fragment >= 0) end = Math.min(end, fragment);
-        return source.substring(0, end);
-    }
-
-    private static final class Resource implements AutoCloseable {
-
-        private final InputStream input;
-        private final long length;
-        private final Response response;
-        private final LoadSession session;
-        private final Call call;
-
-        private Resource(InputStream input, long length, Response response, LoadSession session, Call call) {
-            this.input = input;
-            this.length = length;
-            this.response = response;
-            this.session = session;
-            this.call = call;
-        }
+    private record Resource(InputStream input, long length, Response response, LoadSession session, Call call) implements AutoCloseable {
 
         @Override
         public void close() throws IOException {
@@ -588,6 +614,25 @@ public final class NodeBundle {
 
         private boolean canceled;
         private Call call;
+        private Download download;
+
+        private static InterruptedIOException canceled(Throwable cause) {
+            InterruptedIOException error = new InterruptedIOException("Node bundle load canceled");
+            if (cause != null) error.initCause(cause);
+            return error;
+        }
+
+        private synchronized void attach(Download download) throws InterruptedIOException {
+            if (canceled || Thread.currentThread().isInterrupted()) {
+                download.cancel();
+                throw canceled(null);
+            }
+            this.download = download;
+        }
+
+        private synchronized void detach(Download download) {
+            if (this.download == download) this.download = null;
+        }
 
         private synchronized void attach(Call call) throws InterruptedIOException {
             if (canceled || Thread.currentThread().isInterrupted()) {
@@ -603,7 +648,30 @@ public final class NodeBundle {
 
         private synchronized void cancel() {
             canceled = true;
-            if (call != null) call.cancel();
+            Throwable failure = cancelCall();
+            failure = cancelDownload(failure);
+            if (failure instanceof RuntimeException error) throw error;
+            if (failure instanceof Error error) throw error;
+        }
+
+        private Throwable cancelCall() {
+            Throwable failure = null;
+            try {
+                if (call != null) call.cancel();
+            } catch (RuntimeException | Error error) {
+                failure = error;
+            }
+            return failure;
+        }
+
+        private Throwable cancelDownload(Throwable failure) {
+            try {
+                if (download != null) download.cancel();
+            } catch (RuntimeException | Error error) {
+                if (failure == null) failure = error;
+                else if (failure != error) failure.addSuppressed(error);
+            }
+            return failure;
         }
 
         private synchronized void check() throws InterruptedIOException {
@@ -613,12 +681,5 @@ public final class NodeBundle {
         private synchronized void check(Throwable cause) throws InterruptedIOException {
             if (canceled || Thread.currentThread().isInterrupted()) throw canceled(cause);
         }
-
-        private static InterruptedIOException canceled(Throwable cause) {
-            InterruptedIOException error = new InterruptedIOException("Node bundle load canceled");
-            if (cause != null) error.initCause(cause);
-            return error;
-        }
     }
-
 }

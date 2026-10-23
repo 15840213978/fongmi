@@ -167,19 +167,6 @@
                 <data android:scheme="udp" />
                 <data android:scheme="ed2k" />
                 <data android:scheme="magnet" />
-                <data android:scheme="thunder" />
-                <data android:scheme="jianpian" />
-                <data android:scheme="tvbox-xg" />
-                <data android:scheme="tvbus" />
-                <data android:scheme="p2p" />
-                <data android:scheme="p3p" />
-                <data android:scheme="p4p" />
-                <data android:scheme="p5p" />
-                <data android:scheme="p6p" />
-                <data android:scheme="p7p" />
-                <data android:scheme="p8p" />
-                <data android:scheme="p9p" />
-                <data android:scheme="mitv" />
             </intent-filter>
         </activity>
 

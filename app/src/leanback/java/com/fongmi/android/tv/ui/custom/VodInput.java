@@ -13,13 +13,15 @@ public final class VodInput extends BaseInput<VodInput.Listener> {
     private static final int SEEK_COMMIT_DELAY_MS = 250;
 
     private boolean fullscreen;
+    private int centerKeyCode = KeyEvent.KEYCODE_UNKNOWN;
+    private long centerKeyDownTime;
 
     public static VodInput create(Context context, Listener listener) {
         return new VodInput(context, listener);
     }
 
     private VodInput(Context context, Listener listener) {
-        super(context, listener, false);
+        super(context, listener);
     }
 
     @Override
@@ -55,10 +57,21 @@ public final class VodInput extends BaseInput<VodInput.Listener> {
             else listener.onKeyUp();
         } else if (KeyUtil.isActionUp(event) && KeyUtil.isDownKey(event)) {
             listener.onKeyDown();
-        } else if (KeyUtil.isActionUp(event) && KeyUtil.isEnterKey(event)) {
-            listener.onKeyCenter();
+        } else if (KeyUtil.isEnterKey(event)) {
+            onCenterKey(event);
         } else if (event.isLongPress() && KeyUtil.isUpKey(event)) {
             beginSpeedPress();
+        }
+    }
+
+    private void onCenterKey(KeyEvent event) {
+        if (KeyUtil.isActionDown(event) && event.getRepeatCount() == 0) {
+            centerKeyCode = event.getKeyCode();
+            centerKeyDownTime = event.getDownTime();
+        } else if (KeyUtil.isActionUp(event)) {
+            boolean ownsPress = centerKeyCode == event.getKeyCode() && centerKeyDownTime == event.getDownTime();
+            centerKeyCode = KeyEvent.KEYCODE_UNKNOWN;
+            if (ownsPress && !event.isCanceled()) listener.onKeyCenter();
         }
     }
 

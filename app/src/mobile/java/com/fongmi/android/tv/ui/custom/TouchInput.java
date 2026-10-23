@@ -2,13 +2,15 @@ package com.fongmi.android.tv.ui.custom;
 
 import android.app.Activity;
 import android.content.Context;
+import android.graphics.RectF;
 import android.media.AudioManager;
 import android.view.MotionEvent;
 import android.view.ScaleGestureDetector;
-import android.view.View;
 import android.view.WindowManager;
 
 import androidx.annotation.NonNull;
+import androidx.media3.common.VideoTransform;
+import androidx.media3.ui.PlayerView;
 
 import com.fongmi.android.tv.App;
 import com.fongmi.android.tv.setting.LiveSetting;
@@ -22,9 +24,11 @@ public final class TouchInput extends BaseInput<TouchInput.Listener> implements 
     private enum ScrollAction {PENDING, NONE, SEEK, BRIGHTNESS, VOLUME}
 
     private final ScaleGestureDetector scaleDetector;
+    private final PinchScale pinchScale = new PinchScale();
+    private final RectF pinchContentBounds = new RectF();
     private final AudioManager manager;
     private final Activity activity;
-    private final View videoView;
+    private final PlayerView videoView;
     private final Runnable endScaleCooldown = () -> scaling = false;
     private ScrollAction scrollAction = ScrollAction.PENDING;
     private boolean scaling;
@@ -32,21 +36,24 @@ public final class TouchInput extends BaseInput<TouchInput.Listener> implements 
     private boolean multiTouch;
     private boolean animating;
     private boolean locked;
+    private float pivotX;
+    private float pivotY;
+    private float translationX;
+    private float translationY;
     private float initialBrightness;
     private float initialVolume;
-    private float scale;
 
-    public static TouchInput create(Activity activity, View videoView, Listener listener) {
+    public static TouchInput create(Activity activity, PlayerView videoView, Listener listener) {
         return new TouchInput(activity, videoView, listener);
     }
 
-    private TouchInput(Activity activity, View videoView, Listener listener) {
+    private TouchInput(Activity activity, PlayerView videoView, Listener listener) {
         super(activity, listener);
         this.manager = (AudioManager) activity.getSystemService(Context.AUDIO_SERVICE);
         this.scaleDetector = new ScaleGestureDetector(activity, this);
+        this.scaleDetector.setQuickScaleEnabled(false);
         this.videoView = videoView;
         this.activity = activity;
-        this.scale = 1.0f;
     }
 
     @Override
@@ -65,12 +72,11 @@ public final class TouchInput extends BaseInput<TouchInput.Listener> implements 
     }
 
     public void resetScale() {
-        if (scale == 1.0f) return;
-        videoView.animate().scaleX(1.0f).scaleY(1.0f).translationX(0f).translationY(0f).setDuration(250).withEndAction(() -> {
-            videoView.setPivotY(videoView.getHeight() / 2.0f);
-            videoView.setPivotX(videoView.getWidth() / 2.0f);
-            scale = 1.0f;
-        }).start();
+        App.removeCallbacks(endScaleCooldown);
+        scaling = false;
+        pinchScale.reset();
+        listener.onPinchScaleEnd();
+        if (!videoView.getVideoTransform().equals(VideoTransform.DEFAULT)) videoView.animateVideoTransform(VideoTransform.DEFAULT, 250);
     }
 
     public void setLock(boolean locked) {
@@ -78,8 +84,8 @@ public final class TouchInput extends BaseInput<TouchInput.Listener> implements 
         if (locked) cancelSeekTaps();
     }
 
-    public float getScale() {
-        return scale;
+    public boolean isScaled() {
+        return !videoView.getVideoTransform().equals(VideoTransform.DEFAULT);
     }
 
     private boolean isMultiTouch(MotionEvent e) {
@@ -179,11 +185,22 @@ public final class TouchInput extends BaseInput<TouchInput.Listener> implements 
         float dx = e2.getX() - e1.getX();
         float dy = e2.getY() - e1.getY();
         double angle = Math.toDegrees(Math.atan2(Math.abs(dy), Math.abs(dx)));
-        if (angle > 70 && e1.getY() - e2.getY() > FLING_DISTANCE_PX) {
-            videoView.animate().translationYBy(ResUtil.dp2px(LiveSetting.isInvert() ? 24 : -24)).setDuration(150).withStartAction(() -> animating = true).withEndAction(() -> videoView.animate().translationY(0).setDuration(100).withStartAction(listener::onFlingUp).withEndAction(() -> animating = false).start()).start();
-        } else if (angle > 70 && e2.getY() - e1.getY() > FLING_DISTANCE_PX) {
-            videoView.animate().translationYBy(ResUtil.dp2px(LiveSetting.isInvert() ? -24 : 24)).setDuration(150).withStartAction(() -> animating = true).withEndAction(() -> videoView.animate().translationY(0).setDuration(100).withStartAction(listener::onFlingDown).withEndAction(() -> animating = false).start()).start();
-        }
+        if (angle > 70 && e1.getY() - e2.getY() > FLING_DISTANCE_PX) animateVerticalFling(LiveSetting.isInvert() ? 24 : -24, listener::onFlingUp);
+        else if (angle > 70 && e2.getY() - e1.getY() > FLING_DISTANCE_PX) animateVerticalFling(LiveSetting.isInvert() ? -24 : 24, listener::onFlingDown);
+    }
+
+    private void animateVerticalFling(int distance, Runnable action) {
+        videoView.animate().translationYBy(ResUtil.dp2px(distance)).setDuration(150)
+                .withStartAction(() -> animating = true)
+                .withEndAction(() -> finishVerticalFling(action))
+                .start();
+    }
+
+    private void finishVerticalFling(Runnable action) {
+        videoView.animate().translationY(0).setDuration(100)
+                .withStartAction(action)
+                .withEndAction(() -> animating = false)
+                .start();
     }
 
     private void adjustBrightness(float deltaY) {
@@ -211,24 +228,92 @@ public final class TouchInput extends BaseInput<TouchInput.Listener> implements 
     @Override
     public boolean onScaleBegin(@NonNull ScaleGestureDetector detector) {
         App.removeCallbacks(endScaleCooldown);
-        if (hasScrollAction() || isSpeedPressActive() || locked) return scaling = false;
+        if (!listener.isScaleEnabled() || hasScrollAction() || isSpeedPressActive() || locked || animating) return scaling = false;
+        videoView.finishVideoTransformAnimation();
+        VideoTransform transform = videoView.getVideoTransform();
+        pinchScale.setScale(transform.scaleX, transform.scaleY);
+        pinchContentBounds.set(videoView.getVideoBounds());
+        pivotX = pinchContentBounds.centerX();
+        pivotY = pinchContentBounds.centerY();
+        translationX = transform.panX * pinchContentBounds.width() * transform.scaleX;
+        translationY = transform.panY * pinchContentBounds.height() * transform.scaleY;
+        setPinchPivot(detector);
+        beginPinchScale(detector);
         return scaling = true;
+    }
+
+    private void setPinchPivot(ScaleGestureDetector detector) {
+        float focusX = detector.getFocusX() - videoView.getLeft();
+        float focusY = detector.getFocusY() - videoView.getTop();
+        if (PinchScale.useCenterPivot(multiTouch, detector.getCurrentSpanX(), detector.getCurrentSpanY(), focusX, focusY, videoView.getWidth(), videoView.getHeight())) {
+            focusX = videoView.getWidth() / 2.0f;
+            focusY = videoView.getHeight() / 2.0f;
+        }
+        float localPivotX = PinchScale.localFocus(focusX, translationX, pivotX, pinchScale.getVisualScaleX());
+        float localPivotY = PinchScale.localFocus(focusY, translationY, pivotY, pinchScale.getVisualScaleY());
+        translationX = focusX - localPivotX;
+        translationY = focusY - localPivotY;
+        pivotX = localPivotX;
+        pivotY = localPivotY;
+    }
+
+    private void beginPinchScale(ScaleGestureDetector detector) {
+        RectF contentBounds = pinchContentBounds;
+        if (contentBounds.isEmpty()) contentBounds.set(0, 0, videoView.getWidth(), videoView.getHeight());
+        PinchScale.Axis axis = multiTouch ? PinchScale.axisForSpans(detector.getCurrentSpanX(), detector.getCurrentSpanY()) : PinchScale.Axis.BOTH;
+        float edgeScaleX = axis == PinchScale.Axis.HORIZONTAL
+                ? PinchScale.centeredEdgeScale(contentBounds.left, contentBounds.right, pivotX, videoView.getWidth(), translationX, pinchScale.getScaleX())
+                : PinchScale.edgeContactScale(contentBounds.left, contentBounds.right, pivotX, videoView.getWidth(), translationX, pinchScale.getScaleX());
+        float edgeScaleY = axis == PinchScale.Axis.VERTICAL
+                ? PinchScale.centeredEdgeScale(contentBounds.top, contentBounds.bottom, pivotY, videoView.getHeight(), translationY, pinchScale.getScaleY())
+                : PinchScale.edgeContactScale(contentBounds.top, contentBounds.bottom, pivotY, videoView.getHeight(), translationY, pinchScale.getScaleY());
+        if (axis == PinchScale.Axis.HORIZONTAL) {
+            float pivot = contentBounds.centerX();
+            pivotX = pivot;
+            translationX = videoView.getWidth() / 2.0f - pivot;
+        } else if (axis == PinchScale.Axis.VERTICAL) {
+            float pivot = contentBounds.centerY();
+            pivotY = pivot;
+            translationY = videoView.getHeight() / 2.0f - pivot;
+        }
+        pinchScale.begin(detector.getCurrentSpanX(), detector.getCurrentSpanY(), edgeScaleX, edgeScaleY);
     }
 
     @Override
     public void onScaleEnd(@NonNull ScaleGestureDetector detector) {
+        if (scaling && listener.isScaleEnabled()) {
+            float releasedX = PinchScale.releaseTranslation(translationX, pinchContentBounds.left, pinchContentBounds.right, pivotX, pinchScale.getScaleX(), pinchScale.getVisualScaleX(), videoView.getWidth());
+            float releasedY = PinchScale.releaseTranslation(translationY, pinchContentBounds.top, pinchContentBounds.bottom, pivotY, pinchScale.getScaleY(), pinchScale.getVisualScaleY(), videoView.getHeight());
+            VideoTransform target = videoTransform(pinchScale.getScaleX(), pinchScale.getScaleY(), releasedX, releasedY);
+            if (!target.equals(videoView.getVideoTransform())) videoView.animateVideoTransform(target, 180);
+        }
+        pinchScale.end();
+        listener.onPinchScaleEnd();
         App.post(endScaleCooldown, 500);
     }
 
     @Override
     public boolean onScale(@NonNull ScaleGestureDetector detector) {
-        scale *= detector.getScaleFactor();
-        scale = Math.clamp(scale, 1.0f, 5.0f);
-        videoView.setPivotX(detector.getFocusX());
-        videoView.setPivotY(detector.getFocusY());
-        videoView.setScaleX(scale);
-        videoView.setScaleY(scale);
+        if (!scaling || !listener.isScaleEnabled()) return scaling = false;
+        float factor = detector.getScaleFactor();
+        float previousScaleX = pinchScale.getScaleX();
+        float previousScaleY = pinchScale.getScaleY();
+        float previousVisualScaleX = pinchScale.getVisualScaleX();
+        float previousVisualScaleY = pinchScale.getVisualScaleY();
+        PinchScale.Axis axis = pinchScale.update(factor, multiTouch);
+        if (axis != PinchScale.Axis.VERTICAL && PinchScale.shouldConstrainTranslation(previousScaleX, previousVisualScaleX, pinchScale.getScaleX(), pinchScale.getVisualScaleX())) translationX = PinchScale.constrainTranslation(translationX, pinchContentBounds.left, pinchContentBounds.right, pivotX, pinchScale.getVisualScaleX(), videoView.getWidth());
+        if (axis != PinchScale.Axis.HORIZONTAL && PinchScale.shouldConstrainTranslation(previousScaleY, previousVisualScaleY, pinchScale.getScaleY(), pinchScale.getVisualScaleY())) translationY = PinchScale.constrainTranslation(translationY, pinchContentBounds.top, pinchContentBounds.bottom, pivotY, pinchScale.getVisualScaleY(), videoView.getHeight());
+        videoView.setVideoTransform(videoTransform(pinchScale.getVisualScaleX(), pinchScale.getVisualScaleY(), translationX, translationY));
+        listener.onPinchScale(axis, pinchScale.getScaleX(), pinchScale.getScaleY());
         return true;
+    }
+
+    private VideoTransform videoTransform(float scaleX, float scaleY, float translationX, float translationY) {
+        float offsetX = translationX + (1 - scaleX) * (pivotX - pinchContentBounds.centerX());
+        float offsetY = translationY + (1 - scaleY) * (pivotY - pinchContentBounds.centerY());
+        return new VideoTransform(scaleX, scaleY,
+                offsetX / (pinchContentBounds.width() * scaleX),
+                offsetY / (pinchContentBounds.height() * scaleY));
     }
 
     public interface Listener extends BaseInput.Listener {
@@ -247,6 +332,12 @@ public final class TouchInput extends BaseInput<TouchInput.Listener> implements 
         void onBright(int progress);
 
         void onVolume(int progress);
+
+        boolean isScaleEnabled();
+
+        void onPinchScale(PinchScale.Axis axis, float scaleX, float scaleY);
+
+        void onPinchScaleEnd();
 
         void onFlingUp();
 

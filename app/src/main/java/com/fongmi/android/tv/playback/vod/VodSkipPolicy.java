@@ -17,9 +17,7 @@ final class VodSkipPolicy {
         long position = Math.max(autoSkip ? C.TIME_UNSET : opening, resumePositionMs);
         if (result.hasPosition()) position = Math.max(position, result.getPosition());
         if (!autoSkip) return position;
-        for (SkipSegment segment : result.getSkipSegments()) {
-            if (segment != null && segment.isOpening() && segment.isValid() && segment.getStart() == 0) position = Math.max(position, segment.getEnd());
-        }
+        for (SkipSegment segment : result.getSkipSegments()) if (segment != null && segment.isOpening() && segment.isValid() && segment.getStart() == 0) position = Math.max(position, segment.getEnd());
         return position;
     }
 

@@ -28,6 +28,7 @@ import com.fongmi.android.tv.Updater;
 import com.fongmi.android.tv.api.config.LiveConfig;
 import com.fongmi.android.tv.api.config.VodConfig;
 import com.fongmi.android.tv.api.config.WallConfig;
+import com.fongmi.android.tv.api.node.NodeRuntime;
 import com.fongmi.android.tv.bean.Cache;
 import com.fongmi.android.tv.bean.Config;
 import com.fongmi.android.tv.bean.Func;
@@ -54,6 +55,7 @@ import com.fongmi.android.tv.ui.base.BaseActivity;
 import com.fongmi.android.tv.ui.custom.CustomRowPresenter;
 import com.fongmi.android.tv.ui.custom.CustomSelector;
 import com.fongmi.android.tv.ui.custom.CustomTitleView;
+import com.fongmi.android.tv.ui.dialog.LocalConnectDialog;
 import com.fongmi.android.tv.ui.dialog.SiteDialog;
 import com.fongmi.android.tv.ui.presenter.FuncPresenter;
 import com.fongmi.android.tv.ui.presenter.HeaderPresenter;
@@ -81,7 +83,11 @@ import java.util.Optional;
 public class HomeActivity extends BaseActivity implements CustomTitleView.Listener, VodPresenter.OnClickListener, FuncPresenter.OnClickListener, HistoryPresenter.OnClickListener {
 
     private static final String STATE_ACTION_HANDLED = "action_handled";
-    private static int instanceCount;
+    private static volatile int instanceCount;
+
+    public static boolean isRunning() {
+        return instanceCount > 0;
+    }
 
     private ActivityHomeBinding mBinding;
     private ArrayObjectAdapter mHistoryAdapter;
@@ -137,15 +143,11 @@ public class HomeActivity extends BaseActivity implements CustomTitleView.Listen
         mResult = Result.empty();
         mClock = Clock.create(mBinding.clock);
         mBinding.progressLayout.showProgress();
-        PermissionUtil.requestNotify(this);
-        DLNARendererService.start(this);
-        Updater.create().start(this);
+        Updater.get().start(this, false);
         setRecyclerView();
         setViewModel();
         setAdapter();
-        initConfig();
-        setTitle();
-        setLogo();
+        checkPermission();
     }
 
     @Override
@@ -191,11 +193,14 @@ public class HomeActivity extends BaseActivity implements CustomTitleView.Listen
 
     private void setViewModel() {
         mViewModel = new ViewModelProvider(this).get(SiteViewModel.class);
-        mViewModel.getResult().observe(this, result -> {
-            mAdapter.remove("progress");
-            addVideo(mResult = result);
-            Cache.clear().put(result);
-        });
+        mViewModel.getAction().observe(this, result -> WebActivity.handleAction(this, result));
+        mViewModel.getResult().observe(this, this::onResult);
+    }
+
+    private void onResult(Result result) {
+        mAdapter.remove("progress");
+        addVideo(mResult = result);
+        Cache.clear().put(result);
     }
 
     private void setAdapter() {
@@ -203,6 +208,18 @@ public class HomeActivity extends BaseActivity implements CustomTitleView.Listen
         mAdapter.add(new ListRow(mFuncAdapter = new ArrayObjectAdapter(new FuncPresenter(this))));
         mAdapter.add(R.string.home_history);
         mAdapter.add(R.string.home_recommend);
+    }
+
+    private void checkPermission() {
+        PermissionUtil.requestLocalNetwork(this, this::onNetworkPermissionResult);
+    }
+
+    private void onNetworkPermissionResult(boolean allGranted) {
+        PermissionUtil.requestNotify(this);
+        if (allGranted) DLNARendererService.start(this);
+        initConfig();
+        setTitle();
+        setLogo();
     }
 
     private void setTitle() {
@@ -290,14 +307,15 @@ public class HomeActivity extends BaseActivity implements CustomTitleView.Listen
 
     private void addGrid(List<Vod> items, Style style) {
         List<ListRow> rows = new ArrayList<>();
-        // Leanback assigns recycled view types by presenter identity.
         if (mVodPresenter == null || !mVodPresenter.matches(style)) mVodPresenter = new VodPresenter(this, style);
-        for (List<Vod> part : Lists.partition(items, Product.getColumn(style))) {
-            ArrayObjectAdapter adapter = new ArrayObjectAdapter(mVodPresenter);
-            adapter.addAll(0, part);
-            rows.add(new ListRow(adapter));
-        }
+        for (List<Vod> part : Lists.partition(items, Product.getColumn(style))) rows.add(createVideoRow(part));
         mAdapter.addAll(mAdapter.size(), rows);
+    }
+
+    private ListRow createVideoRow(List<Vod> items) {
+        ArrayObjectAdapter adapter = new ArrayObjectAdapter(mVodPresenter);
+        adapter.addAll(0, items);
+        return new ListRow(adapter);
     }
 
     private void setFunc() {
@@ -398,11 +416,8 @@ public class HomeActivity extends BaseActivity implements CustomTitleView.Listen
 
     @Subscribe(threadMode = ThreadMode.MAIN)
     public void onCastEvent(CastEvent event) {
-        if (VodConfig.get().getConfig().equals(event.config())) {
-            VideoActivity.cast(this, event.history());
-        } else {
-            VodConfig.load(event.config(), getCallback(event));
-        }
+        if (VodConfig.get().getConfig().equals(event.config())) VideoActivity.cast(this, event.history());
+        else VodConfig.load(event.config(), getCallback(event));
     }
 
     private Callback getCallback(CastEvent event) {
@@ -424,7 +439,7 @@ public class HomeActivity extends BaseActivity implements CustomTitleView.Listen
         if (item.getResId() == R.string.home_vod) VodActivity.start(this, mResult);
         else if (item.getResId() == R.string.home_live) LiveActivity.start(this);
         else if (item.getResId() == R.string.home_keep) KeepActivity.start(this);
-        else if (item.getResId() == R.string.home_push) PushActivity.start(this);
+        else if (item.getResId() == R.string.home_push) LocalConnectDialog.show(this, "push");
         else if (item.getResId() == R.string.home_search) SearchActivity.start(this);
         else if (item.getResId() == R.string.home_setting) SettingActivity.start(this);
     }
@@ -514,14 +529,20 @@ public class HomeActivity extends BaseActivity implements CustomTitleView.Listen
     @Override
     protected void onDestroy() {
         if (--instanceCount == 0) {
-            DLNARendererService.stop(this);
-            LiveConfig.get().clear();
-            VodConfig.get().clear();
             BackupManager.backup();
-            OkHttp.get().clear();
-            Source.get().exit();
-            Server.get().stop();
+            releaseResources();
         }
         super.onDestroy();
+    }
+
+    public static void releaseResources() {
+        if (isRunning() || PlaybackService.isRunning()) return;
+        DLNARendererService.stop(App.get());
+        LiveConfig.get().clear();
+        VodConfig.get().clear();
+        OkHttp.get().clear();
+        Source.get().exit();
+        Server.get().stop();
+        NodeRuntime.get().releaseIfUnused();
     }
 }

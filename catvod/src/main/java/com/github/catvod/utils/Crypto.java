@@ -137,9 +137,7 @@ public final class Crypto {
     }
 
     private static String aesGcm(boolean encrypt, String input, boolean inputBase64, String keyHex, String ivHex, boolean outputBase64) throws GeneralSecurityException {
-        byte[] data;
-        if (encrypt) data = decode(input, inputBase64);
-        else data = inputBase64 ? decode(input, true) : fromHex(input);
+        byte[] data = !encrypt && !inputBase64 ? fromHex(input) : decode(input, inputBase64);
         if (!encrypt && data.length < GCM_TAG_SIZE) return "";
         Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
         SecretKeySpec key = new SecretKeySpec(fromHex(keyHex), "AES");

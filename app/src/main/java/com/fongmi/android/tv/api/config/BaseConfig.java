@@ -9,12 +9,12 @@ import com.fongmi.android.tv.event.ConfigEvent;
 import com.fongmi.android.tv.impl.Callback;
 import com.fongmi.android.tv.server.Server;
 import com.fongmi.android.tv.utils.Notify;
-import com.fongmi.android.tv.utils.Task;
 import com.fongmi.android.tv.utils.UrlUtil;
 import com.github.catvod.bean.Header;
 import com.github.catvod.bean.Proxy;
 import com.github.catvod.net.OkHttp;
 import com.github.catvod.utils.Json;
+import com.github.catvod.utils.Task;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -33,6 +33,7 @@ abstract class BaseConfig {
     public static final int WALL = 2;
 
     private final AtomicInteger taskId = new AtomicInteger(0);
+    private final Object loadLock = new Object();
 
     protected boolean sync;
     protected volatile Config config;
@@ -86,13 +87,24 @@ abstract class BaseConfig {
     }
 
     public void load(Callback callback) {
-        int id = taskId.incrementAndGet();
-        if (future != null && !future.isDone()) {
-            cancelLoad();
-            future.cancel(true);
+        synchronized (loadLock) {
+            int id = taskId.incrementAndGet();
+            if (future != null && !future.isDone()) {
+                cancelLoad();
+                future.cancel(true);
+            }
+            future = Task.submit(() -> loadConfig(id, config, callback));
         }
-        future = Task.submit(() -> loadConfig(id, config, callback));
         callback.start();
+    }
+
+    public void cancel() {
+        synchronized (loadLock) {
+            taskId.incrementAndGet();
+            cancelLoad();
+            OkHttp.cancel(getTag());
+            if (future != null && !future.isDone()) future.cancel(true);
+        }
     }
 
     protected void loadConfig(int id, Config config, Callback callback) {
@@ -101,20 +113,26 @@ abstract class BaseConfig {
             OkHttp.cancel(getTag());
             load(config);
             if (taskId.get() != id) return;
-            if (config.equals(this.config)) config.update();
-            String notice = config.getNotice();
-            App.post(() -> {
-                if (taskId.get() == id) Notify.show(notice);
-            });
-            App.post(callback::success);
+            completeLoad(id, config, callback);
         } catch (Throwable e) {
             if (isCanceled(e)) return;
             e.printStackTrace();
             if (taskId.get() != id) return;
-            if (TextUtils.isEmpty(config.getUrl())) App.post(() -> callback.error(""));
-            else App.post(() -> callback.error(Notify.getError(R.string.error_config_get, e)));
+            App.post(() -> {
+                if (taskId.get() == id) callback.error(TextUtils.isEmpty(config.getUrl()) ? "" : Notify.getError(R.string.error_config_get, e));
+            });
         }
         if (taskId.get() == id) postEvent();
+    }
+
+    private void completeLoad(int id, Config config, Callback callback) {
+        if (config.equals(this.config)) config.update();
+        String notice = config.getNotice();
+        App.post(() -> {
+            if (taskId.get() != id) return;
+            Notify.show(notice);
+            callback.success();
+        });
     }
 
     protected boolean isCanceled(Throwable e) {

@@ -44,11 +44,11 @@ public class CustomRowPresenter extends ListRowPresenter {
     protected void initializeRowViewHolder(RowPresenter.ViewHolder holder) {
         super.initializeRowViewHolder(holder);
         ViewHolder vh = (ViewHolder) holder;
-        vh.getGridView().setFocusScrollStrategy(strategy);
-        vh.getGridView().setHorizontalSpacing(ResUtil.dp2px(spacing));
-        // Keep view types consistent when recycling item views between rows.
-        if (recycledViewPool == null) recycledViewPool = vh.getGridView().getRecycledViewPool();
-        else vh.getGridView().setRecycledViewPool(recycledViewPool);
+        HorizontalGridView grid = vh.getGridView();
+        grid.setFocusScrollStrategy(strategy);
+        grid.setHorizontalSpacing(ResUtil.dp2px(spacing));
+        if (recycledViewPool == null) recycledViewPool = grid.getRecycledViewPool();
+        else grid.setRecycledViewPool(recycledViewPool);
         ItemBridgeAdapter adapter = vh.getBridgeAdapter();
         if (presenterMapper == null) presenterMapper = adapter.getPresenterMapper();
         else adapter.setPresenterMapper(presenterMapper);

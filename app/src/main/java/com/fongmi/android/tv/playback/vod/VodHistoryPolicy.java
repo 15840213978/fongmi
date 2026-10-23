@@ -11,7 +11,7 @@ import com.fongmi.android.tv.bean.History;
 import com.fongmi.android.tv.bean.Vod;
 import com.fongmi.android.tv.event.RefreshEvent;
 import com.fongmi.android.tv.setting.Setting;
-import com.fongmi.android.tv.utils.Task;
+import com.github.catvod.utils.Task;
 
 public class VodHistoryPolicy {
 
@@ -20,6 +20,7 @@ public class VodHistoryPolicy {
         history = history == null ? create(key, item) : history;
         if (!TextUtils.isEmpty(mark)) history.setVodRemarks(mark);
         if (Setting.isIncognito()) history.delete();
+        item.checkName(history.getVodName());
         history.setVodName(item.getName());
         return history;
     }
@@ -65,7 +66,6 @@ public class VodHistoryPolicy {
 
     public void saveDiscVisit(History history, boolean exit, long time) {
         if (history == null || Setting.isIncognito()) return;
-        // Menu time is not a resumable title position; keep an earlier title bookmark intact.
         history.setCreateTime(time);
         History copy = copyForSave(history);
         Task.executeSerial(() -> {
@@ -75,9 +75,16 @@ public class VodHistoryPolicy {
     }
 
     public void saveCurrent(History history) {
+        saveCurrent(history, false);
+    }
+
+    public void saveCurrent(History history, boolean refresh) {
         if (history == null || Setting.isIncognito()) return;
         History copy = copyForSave(history);
-        Task.executeSerial(copy::save);
+        Task.executeSerial(() -> {
+            copy.save();
+            if (refresh) RefreshEvent.history();
+        });
     }
 
     public void updateEpisode(History history, Flag flag, Episode episode) {

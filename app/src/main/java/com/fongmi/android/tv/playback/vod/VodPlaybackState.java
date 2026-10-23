@@ -32,6 +32,7 @@ public class VodPlaybackState {
     private boolean selectFirstSource;
     private boolean autoFallback;
     private boolean useParse;
+    private boolean builtin;
 
     public VodPlaybackState() {
         this.failedIds = new HashSet<>();
@@ -59,6 +60,7 @@ public class VodPlaybackState {
         selectFirstSource = false;
         autoFallback = false;
         useParse = false;
+        builtin = false;
     }
 
     void addFailedId(String id) {
@@ -216,15 +218,11 @@ public class VodPlaybackState {
     }
 
     void beginPreload(VodPlayRequest request) {
-        preload = new PreloadEntry(request, null, null);
+        preload = new PreloadEntry(request, null);
     }
 
     void completePreload(Result result) {
-        if (preload != null) preload = new PreloadEntry(preload.request(), result, preload.update());
-    }
-
-    void setPreloadUpdate(@Nullable Vod preloadUpdate) {
-        if (preload != null) preload = new PreloadEntry(preload.request(), preload.result(), preloadUpdate);
+        if (preload != null) preload = new PreloadEntry(preload.request(), result);
     }
 
     @Nullable
@@ -268,6 +266,14 @@ public class VodPlaybackState {
         return useParse;
     }
 
+    boolean isBuiltin() {
+        return builtin;
+    }
+
+    void setBuiltin(boolean builtin) {
+        this.builtin = builtin;
+    }
+
     void setUseParse(boolean useParse) {
         this.useParse = useParse;
     }
@@ -280,7 +286,7 @@ public class VodPlaybackState {
         this.searchKeyword = searchKeyword == null ? "" : searchKeyword;
     }
 
-    record PreloadEntry(VodPlayRequest request, @Nullable Result result, @Nullable Vod update) {
+    record PreloadEntry(VodPlayRequest request, @Nullable Result result) {
 
         boolean isPending() {
             return result == null;

@@ -11,9 +11,9 @@ import com.fongmi.android.tv.bean.Config;
 import com.fongmi.android.tv.event.ConfigEvent;
 import com.fongmi.android.tv.impl.Callback;
 import com.fongmi.android.tv.setting.Setting;
-import com.fongmi.android.tv.utils.Download;
 import com.fongmi.android.tv.utils.ResUtil;
 import com.fongmi.android.tv.utils.UrlUtil;
+import com.github.catvod.net.Download;
 import com.github.catvod.utils.Path;
 
 import java.io.File;

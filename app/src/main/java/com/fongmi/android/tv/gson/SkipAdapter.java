@@ -17,15 +17,16 @@ public class SkipAdapter implements JsonDeserializer<List<SkipSegment>> {
     public List<SkipSegment> deserialize(JsonElement json, Type typeOfT, JsonDeserializationContext context) throws JsonParseException {
         if (json == null || !json.isJsonArray()) return Collections.emptyList();
         List<SkipSegment> segments = new ArrayList<>();
-        for (JsonElement item : json.getAsJsonArray()) {
-            if (!item.isJsonObject()) continue;
-            try {
-                SkipSegment segment = context.deserialize(item, SkipSegment.class);
-                if (segment != null && segment.isValid()) segments.add(segment);
-            } catch (JsonParseException ignored) {
-                // Invalid optional skip data must not invalidate the playback URL.
-            }
-        }
+        for (JsonElement item : json.getAsJsonArray()) addSegment(segments, item, context);
         return segments;
+    }
+
+    private void addSegment(List<SkipSegment> segments, JsonElement item, JsonDeserializationContext context) {
+        if (!item.isJsonObject()) return;
+        try {
+            SkipSegment segment = context.deserialize(item, SkipSegment.class);
+            if (segment != null && segment.isValid()) segments.add(segment);
+        } catch (JsonParseException ignored) {
+        }
     }
 }

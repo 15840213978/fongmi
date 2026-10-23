@@ -23,6 +23,7 @@ import com.fongmi.android.tv.utils.Notify;
 import com.fongmi.android.tv.utils.PermissionUtil;
 import com.fongmi.android.tv.utils.Sniffer;
 import com.fongmi.android.tv.utils.UrlUtil;
+import com.github.catvod.utils.UriUtil;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -44,27 +45,50 @@ public final class ExternalPlayback {
     public static void open(FragmentActivity activity, Intent source, Consumer<String> onLive) {
         Uri uri = getSourceUri(source);
         if (uri == null) {
-            CharSequence text = source.getCharSequenceExtra(Intent.EXTRA_TEXT);
-            if (TextUtils.isEmpty(text) && source.getClipData() != null && source.getClipData().getItemCount() > 0) text = source.getClipData().getItemAt(0).getText();
-            if (!TextUtils.isEmpty(text)) openText(activity, text.toString(), source);
-            else {
-                Notify.show(R.string.error_play_url);
-                if (source.getBooleanExtra(FORWARD_RESULT, false)) activity.finish();
-            }
+            openSharedText(activity, source);
             return;
         }
         if (!FileChooser.isFileSource(uri)) {
             openText(activity, uri.toString(), source);
             return;
         }
-        Runnable openFile = () -> FileChooser.getFileUri(uri, file -> {
-            if (FileChooser.isLiveSource(new Intent(source).setDataAndType(file, source.getType()))) onLive.accept(UrlUtil.toLocalUrl(file));
-            else start(activity, SiteApi.LOCAL, file.toString(), FileUtil.getDisplayName(file), source);
-        }, () -> {
-            if (source.getBooleanExtra(FORWARD_RESULT, false)) activity.finish();
-        });
-        if (ContentResolver.SCHEME_FILE.equalsIgnoreCase(uri.getScheme())) PermissionUtil.requestFile(activity, granted -> openFile.run());
-        else openFile.run();
+        openFile(activity, uri, source, onLive);
+    }
+
+    private static void openSharedText(FragmentActivity activity, Intent source) {
+        CharSequence text = source.getCharSequenceExtra(Intent.EXTRA_TEXT);
+        if (TextUtils.isEmpty(text) && source.getClipData() != null && source.getClipData().getItemCount() > 0) text = source.getClipData().getItemAt(0).getText();
+        if (!TextUtils.isEmpty(text)) {
+            openText(activity, text.toString(), source);
+        } else {
+            Notify.show(R.string.error_play_url);
+            finishForwarded(activity, source);
+        }
+    }
+
+    private static void openFile(FragmentActivity activity, Uri uri, Intent source, Consumer<String> onLive) {
+        if (ContentResolver.SCHEME_FILE.equalsIgnoreCase(uri.getScheme())) {
+            PermissionUtil.requestFile(activity, granted -> {
+                if (granted) startFile(activity, uri, source, onLive);
+                else finishForwarded(activity, source);
+            });
+        } else {
+            startFile(activity, uri, source, onLive);
+        }
+    }
+
+    private static void startFile(FragmentActivity activity, Uri uri, Intent source, Consumer<String> onLive) {
+        if (FileChooser.isLiveSource(new Intent(source).setDataAndType(uri, source.getType()))) {
+            FileChooser.getFileUri(uri, file -> onLive.accept(UrlUtil.toLocalUrl(file)), () -> finishForwarded(activity, source));
+        } else if (FileChooser.persistReadPermission(source, uri)) {
+            start(activity, SiteApi.LOCAL, uri.toString(), FileUtil.getDisplayName(uri), source);
+        } else {
+            finishForwarded(activity, source);
+        }
+    }
+
+    private static void finishForwarded(Activity activity, Intent source) {
+        if (source.getBooleanExtra(FORWARD_RESULT, false)) activity.finish();
     }
 
     private static void openText(FragmentActivity activity, String text, Intent source) {
@@ -75,6 +99,8 @@ public final class ExternalPlayback {
     private static void start(FragmentActivity activity, String key, String id, String fallbackName, Intent source) {
         String title = getTitle(source);
         Intent player = new Intent(activity, VideoActivity.class);
+        player.setClipData(source.getClipData());
+        player.addFlags(source.getFlags() & (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION));
         player.putExtra("key", key).putExtra("id", id).putExtra("name", TextUtils.isEmpty(title) ? fallbackName : title);
         if (!TextUtils.isEmpty(title)) player.putExtra(TITLE, title);
         player.putExtra(HEADERS, getHeaders(source));
@@ -82,13 +108,7 @@ public final class ExternalPlayback {
         if (position >= 0) player.putExtra(POSITION, position);
         boolean forwardResult = source.getBooleanExtra(FORWARD_RESULT, false);
         player.putExtra(RETURN_RESULT, forwardResult && source.getBooleanExtra("return_result", false));
-        String subtitle = getSubtitle(source);
-        Uri subtitleUri = TextUtils.isEmpty(subtitle) ? null : UrlUtil.uri(subtitle);
-        if (FileChooser.isFileSource(subtitleUri)) {
-            FileChooser.getFileUri(subtitleUri, file -> launch(activity, player.putExtra(SUBTITLE, file.toString()), forwardResult), () -> launch(activity, player, forwardResult));
-        } else {
-            launch(activity, player.putExtra(SUBTITLE, subtitle), forwardResult);
-        }
+        launch(activity, player.putExtra(SUBTITLE, prepareSubtitle(source)), forwardResult);
     }
 
     private static void launch(Activity activity, Intent player, boolean forwardResult) {
@@ -108,7 +128,14 @@ public final class ExternalPlayback {
 
     public static Uri getSubtitleUri(Intent source) {
         String value = getSubtitle(source);
-        return TextUtils.isEmpty(value) ? null : UrlUtil.uri(value);
+        return TextUtils.isEmpty(value) ? null : UriUtil.uri(value);
+    }
+
+    private static String prepareSubtitle(Intent source) {
+        String subtitle = getSubtitle(source);
+        Uri uri = TextUtils.isEmpty(subtitle) ? null : UriUtil.uri(subtitle);
+        if (FileChooser.isFileSource(uri) && !FileChooser.persistReadPermission(source, uri)) return null;
+        return subtitle;
     }
 
     private static String getSubtitle(Intent source) {
@@ -135,14 +162,14 @@ public final class ExternalPlayback {
     private static Bundle getHeaders(Intent source) {
         Bundle result = new Bundle();
         Bundle extra = source.getBundleExtra("extra_headers");
-        if (extra != null) for (String key : extra.keySet()) {
-            String value = extra.getString(key);
-            if (!TextUtils.isEmpty(key) && value != null) result.putString(key, value);
+        if (extra != null) {
+            for (String key : extra.keySet()) {
+                String value = extra.getString(key);
+                if (!TextUtils.isEmpty(key) && value != null) result.putString(key, value);
+            }
         }
         String[] pairs = source.getStringArrayExtra("headers");
-        if (pairs != null) for (int i = 0; i + 1 < pairs.length; i += 2) {
-            if (!TextUtils.isEmpty(pairs[i]) && pairs[i + 1] != null) result.putString(pairs[i], pairs[i + 1]);
-        }
+        if (pairs != null) for (int i = 0; i + 1 < pairs.length; i += 2) if (!TextUtils.isEmpty(pairs[i]) && pairs[i + 1] != null) result.putString(pairs[i], pairs[i + 1]);
         return result;
     }
 
@@ -154,7 +181,7 @@ public final class ExternalPlayback {
             result.addHeaders(values);
         }
         String subtitle = source.getStringExtra(SUBTITLE);
-        if (!TextUtils.isEmpty(subtitle)) result.addSub(Sub.from(FileUtil.getDisplayName(UrlUtil.uri(subtitle)), subtitle));
+        if (!TextUtils.isEmpty(subtitle)) result.addSub(Sub.from(FileUtil.getDisplayName(UriUtil.uri(subtitle)), subtitle));
     }
 
     public static void applyTitle(Result detail, Intent source) {

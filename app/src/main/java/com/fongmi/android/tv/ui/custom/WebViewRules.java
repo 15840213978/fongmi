@@ -25,8 +25,7 @@ final class WebViewRules {
     static boolean isAd(Uri uri) {
         String host = uri.getHost();
         if (TextUtils.isEmpty(host)) return false;
-        for (String ad : RuleConfig.get().getAds()) if (Util.containOrMatch(host, ad)) return true;
-        return false;
+        return RuleConfig.get().getAds().stream().anyMatch(ad -> Util.containOrMatch(host, ad));
     }
 
     static WebResourceResponse empty() {

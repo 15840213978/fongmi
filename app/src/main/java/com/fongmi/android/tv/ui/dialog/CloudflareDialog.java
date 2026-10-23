@@ -44,11 +44,13 @@ public final class CloudflareDialog {
         dialog.setOnDismissListener(this::onDismiss);
         container.setBackgroundColor(Color.WHITE);
         container.addView(content, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        ViewCompat.setOnApplyWindowInsetsListener(container, (view, windowInsets) -> {
-            Insets insets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout());
-            view.setPadding(insets.left, insets.top, insets.right, insets.bottom);
-            return windowInsets;
-        });
+        ViewCompat.setOnApplyWindowInsetsListener(container, this::onApplyWindowInsets);
+    }
+
+    private WindowInsetsCompat onApplyWindowInsets(View view, WindowInsetsCompat windowInsets) {
+        Insets insets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout());
+        view.setPadding(insets.left, insets.top, insets.right, insets.bottom);
+        return windowInsets;
     }
 
     public CloudflareDialog show() {

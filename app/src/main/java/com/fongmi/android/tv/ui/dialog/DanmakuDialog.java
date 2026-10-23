@@ -3,6 +3,7 @@ package com.fongmi.android.tv.ui.dialog;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
+import android.text.TextUtils;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -27,7 +28,6 @@ import com.fongmi.android.tv.utils.FileUtil;
 
 public final class DanmakuDialog extends BaseBottomSheetDialog implements DanmakuAdapter.OnClickListener {
 
-    private DanmakuAdapter adapter;
     private DialogDanmakuBinding binding;
     private PlayerManager player;
     private Uri pendingDanmaku;
@@ -65,16 +65,18 @@ public final class DanmakuDialog extends BaseBottomSheetDialog implements Danmak
         binding.recycler.setItemAnimator(null);
         binding.recycler.setHasFixedSize(true);
         binding.recycler.addItemDecoration(new SpaceItemDecoration(1, 16));
-        PlaybackDialog.observe(this, player -> {
-            this.player = player;
-            if (player == null) return;
-            adapter = new DanmakuAdapter(this);
-            binding.recycler.setAdapter(adapter.addAll(player.getDanmakus()));
-            binding.recycler.scrollToPosition(adapter.getSelected());
-            binding.recycler.setVisibility(adapter.getItemCount() == 0 ? View.GONE : View.VISIBLE);
-            binding.search.setVisibility(player.getMetadata() == null || DanmakuSetting.getEffectiveApiUrl().isEmpty() ? View.GONE : View.VISIBLE);
-            applyPendingDanmaku();
-        });
+        PlaybackDialog.observe(this, this::bindPlayer);
+    }
+
+    private void bindPlayer(PlayerManager player) {
+        this.player = player;
+        if (player == null) return;
+        DanmakuAdapter adapter = new DanmakuAdapter(this);
+        binding.recycler.setAdapter(adapter.addAll(player.getDanmakus()));
+        binding.recycler.scrollToPosition(adapter.getSelected());
+        binding.recycler.setVisibility(adapter.getItemCount() == 0 ? View.GONE : View.VISIBLE);
+        binding.search.setVisibility(player.getMetadata() == null || TextUtils.isEmpty(DanmakuSetting.getEffectiveApiUrl()) ? View.GONE : View.VISIBLE);
+        applyPendingDanmaku();
     }
 
     @Override
@@ -82,7 +84,7 @@ public final class DanmakuDialog extends BaseBottomSheetDialog implements Danmak
         binding.search.setOnClickListener(this::onSearch);
         binding.choose.setOnClickListener(this::onChoose);
         binding.setting.setOnClickListener(this::onSetting);
-        binding.content.setVisibility(View.GONE);
+        binding.content.setOnClickListener(this::onContent);
     }
 
     private void onSearch(View view) {
@@ -90,7 +92,14 @@ public final class DanmakuDialog extends BaseBottomSheetDialog implements Danmak
         dismiss();
     }
 
+    private void onContent(View view) {
+        FragmentActivity activity = requireActivity();
+        dismissNow();
+        PlaybackContentDialog.create().type(PlaybackContentDialog.DANMAKU).show(activity);
+    }
+
     private void onChoose(View view) {
+        if (!PlaybackDialog.isCurrentPlayer(this, player)) return;
         FileChooser.from(launcher).show(new String[]{"text/*"});
         player.pause();
     }
@@ -102,6 +111,7 @@ public final class DanmakuDialog extends BaseBottomSheetDialog implements Danmak
 
     @Override
     public void onItemClick(Danmaku item) {
+        if (!PlaybackDialog.isCurrentPlayer(this, player)) return;
         player.toggleDanmaku(item);
         dismiss();
     }
@@ -125,7 +135,6 @@ public final class DanmakuDialog extends BaseBottomSheetDialog implements Danmak
     @Override
     public void onDestroyView() {
         binding = null;
-        adapter = null;
         player = null;
         super.onDestroyView();
     }

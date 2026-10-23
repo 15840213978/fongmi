@@ -22,5 +22,6 @@ public final class VodPlaybackInfo {
         snapshot = new Snapshot(Objects.toString(history.getVodName(), ""), episode.getName(), flag.getFlag(), episode.getUrl());
     }
 
-    public record Snapshot(String title, String episodeName, String flag, String id) {}
+    public record Snapshot(String title, String episodeName, String flag, String id) {
+    }
 }

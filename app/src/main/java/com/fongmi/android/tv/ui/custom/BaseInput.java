@@ -14,7 +14,6 @@ public abstract class BaseInput<T extends BaseInput.Listener> extends GestureDet
 
     private final GestureDetector detector;
     private final int touchSlopSquared;
-    private final boolean doubleTapEnabled;
     protected final T listener;
     private boolean speedPressActive;
     private boolean tapMoved;
@@ -26,15 +25,9 @@ public abstract class BaseInput<T extends BaseInput.Listener> extends GestureDet
     private float downY;
 
     protected BaseInput(Context context, T listener) {
-        this(context, listener, true);
-    }
-
-    protected BaseInput(Context context, T listener, boolean doubleTapEnabled) {
         this.detector = new GestureDetector(context, this);
-        if (!doubleTapEnabled) detector.setOnDoubleTapListener(null);
         int touchSlop = ViewConfiguration.get(context).getScaledTouchSlop();
         this.touchSlopSquared = touchSlop * touchSlop;
-        this.doubleTapEnabled = doubleTapEnabled;
         this.listener = listener;
     }
 
@@ -57,7 +50,9 @@ public abstract class BaseInput<T extends BaseInput.Listener> extends GestureDet
             if (listener.onSeekTap(event.getX())) {
                 seekTapUntil = event.getEventTime() + SEEK_TAP_TIMEOUT_MS;
                 handled = true;
-            } else cancelSeekTaps();
+            } else {
+                cancelSeekTaps();
+            }
         }
         return handled;
     }
@@ -75,8 +70,7 @@ public abstract class BaseInput<T extends BaseInput.Listener> extends GestureDet
     }
 
     private boolean isAdditionalSeekTap(MotionEvent event) {
-        return currentDownTime != seekStartDownTime && isSeekTapActive(currentDownTime) && !tapMoved
-                && event.getEventTime() - currentDownTime < ViewConfiguration.getLongPressTimeout() && acceptTap(event);
+        return currentDownTime != seekStartDownTime && isSeekTapActive(currentDownTime) && !tapMoved && event.getEventTime() - currentDownTime < ViewConfiguration.getLongPressTimeout() && acceptTap(event);
     }
 
     protected final long setSeekTime(long time) {
@@ -146,21 +140,16 @@ public abstract class BaseInput<T extends BaseInput.Listener> extends GestureDet
                     seekStartDownTime = currentDownTime;
                     seekTapUntil = currentDownTime + SEEK_TAP_TIMEOUT_MS;
                 }
-            } else listener.onDoubleTap();
+            } else {
+                listener.onDoubleTap();
+            }
         }
         return true;
     }
 
     @Override
-    public final boolean onSingleTapUp(@NonNull MotionEvent event) {
-        if (doubleTapEnabled) return false;
-        if (acceptTap(event)) listener.onSingleTap();
-        return true;
-    }
-
-    @Override
     public final boolean onSingleTapConfirmed(@NonNull MotionEvent event) {
-        if (doubleTapEnabled && acceptTap(event) && !isSeekTapActive()) listener.onSingleTap();
+        if (acceptTap(event) && !isSeekTapActive()) listener.onSingleTap();
         return true;
     }
 

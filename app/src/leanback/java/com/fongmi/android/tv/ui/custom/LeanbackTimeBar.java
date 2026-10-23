@@ -17,16 +17,13 @@ public final class LeanbackTimeBar extends DefaultTimeBar {
 
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
-        if (isEnabled() && (keyCode == KeyEvent.KEYCODE_DPAD_LEFT || keyCode == KeyEvent.KEYCODE_DPAD_RIGHT)) {
-            long heldMs = Math.max(0, event.getEventTime() - event.getDownTime());
-            setKeyTimeIncrement(Constant.INTERVAL_SEEK * (1 + heldMs / 1000));
-        }
+        if (isEnabled() && isSeekKey(keyCode)) updateKeyIncrement(event);
         return super.onKeyDown(keyCode, event);
     }
 
     @Override
     public boolean onKeyUp(int keyCode, KeyEvent event) {
-        if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT || keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) resetKeyIncrement();
+        if (isSeekKey(keyCode)) resetKeyIncrement();
         return super.onKeyUp(keyCode, event);
     }
 
@@ -40,6 +37,15 @@ public final class LeanbackTimeBar extends DefaultTimeBar {
     protected void onDetachedFromWindow() {
         resetKeyIncrement();
         super.onDetachedFromWindow();
+    }
+
+    private boolean isSeekKey(int keyCode) {
+        return keyCode == KeyEvent.KEYCODE_DPAD_LEFT || keyCode == KeyEvent.KEYCODE_DPAD_RIGHT;
+    }
+
+    private void updateKeyIncrement(KeyEvent event) {
+        long heldMs = Math.max(0, event.getEventTime() - event.getDownTime());
+        setKeyTimeIncrement(Constant.INTERVAL_SEEK * (1 + heldMs / 1000));
     }
 
     private void resetKeyIncrement() {

@@ -28,7 +28,6 @@ public final class PlayerEngineDialog extends BaseBottomSheetDialog {
     }
 
     public static void setText(TextView view, PlayerManager player) {
-        if (view == null) return;
         PlaybackAction.setPlaybackMode(player, view);
     }
 
@@ -46,14 +45,16 @@ public final class PlayerEngineDialog extends BaseBottomSheetDialog {
 
     @Override
     protected void initView() {
-        PlaybackDialog.observe(this, player -> {
-            this.player = player;
-            if (player == null) return;
-            int engine = PlaybackAction.getEngine(player);
-            binding.exo.setSelected(engine == PlayerSetting.ENGINE_EXO);
-            binding.mpv.setSelected(engine == PlayerSetting.ENGINE_MPV);
-            (engine == PlayerSetting.ENGINE_MPV ? binding.mpv : binding.exo).requestFocus();
-        });
+        PlaybackDialog.observe(this, this::bindPlayer);
+    }
+
+    private void bindPlayer(PlayerManager player) {
+        this.player = player;
+        if (player == null) return;
+        int engine = PlaybackAction.getEngine(player);
+        binding.exo.setSelected(engine == PlayerSetting.ENGINE_EXO);
+        binding.mpv.setSelected(engine == PlayerSetting.ENGINE_MPV);
+        (engine == PlayerSetting.ENGINE_MPV ? binding.mpv : binding.exo).requestFocus();
     }
 
     @Override
@@ -78,6 +79,7 @@ public final class PlayerEngineDialog extends BaseBottomSheetDialog {
     }
 
     private void selectEngine(int engine) {
+        if (!PlaybackDialog.isCurrentPlayer(this, player)) return;
         player.setEngine(engine);
         dismiss();
     }

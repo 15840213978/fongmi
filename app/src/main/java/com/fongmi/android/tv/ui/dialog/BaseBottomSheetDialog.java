@@ -85,27 +85,29 @@ public abstract class BaseBottomSheetDialog extends BottomSheetDialogFragment {
         FrameLayout sheet = dialog.findViewById(com.google.android.material.R.id.design_bottom_sheet);
         if (sheet == null) return;
         BottomSheetBehavior<FrameLayout> behavior = BottomSheetBehavior.from(sheet);
-        int maxHeight = getMaxHeight();
-        if (maxHeight > 0) {
-            behavior.setMaxHeight(maxHeight);
-            ViewGroup.LayoutParams params = sheet.getLayoutParams();
-            params.height = ViewGroup.LayoutParams.MATCH_PARENT;
-            sheet.setLayoutParams(params);
-            ViewCompat.setOnApplyWindowInsetsListener(requireView(), (view, insets) -> {
-                // Material adds IME padding to the sheet. Reserve it outside the normal content height.
-                int keyboard = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom;
-                int navigation = insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom;
-                int height = maxHeight + Math.max(0, keyboard - navigation);
-                if (behavior.getMaxHeight() != height) {
-                    behavior.setMaxHeight(height);
-                    sheet.requestLayout();
-                }
-                return insets;
-            });
-            ViewCompat.requestApplyInsets(requireView());
-        }
+        setHeight(sheet, behavior);
         behavior.setState(BottomSheetBehavior.STATE_EXPANDED);
         behavior.setSkipCollapsed(true);
+    }
+
+    private void setHeight(FrameLayout sheet, BottomSheetBehavior<FrameLayout> behavior) {
+        int maxHeight = getMaxHeight();
+        if (maxHeight <= 0) return;
+        behavior.setMaxHeight(maxHeight);
+        ViewGroup.LayoutParams params = sheet.getLayoutParams();
+        params.height = ViewGroup.LayoutParams.MATCH_PARENT;
+        sheet.setLayoutParams(params);
+        ViewCompat.setOnApplyWindowInsetsListener(requireView(), (view, insets) -> {
+            int keyboard = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom;
+            int navigation = insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom;
+            int height = maxHeight + Math.max(0, keyboard - navigation);
+            if (behavior.getMaxHeight() != height) {
+                behavior.setMaxHeight(height);
+                sheet.requestLayout();
+            }
+            return insets;
+        });
+        ViewCompat.requestApplyInsets(requireView());
     }
 
     private void setupBackDispatcher() {

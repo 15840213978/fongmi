@@ -1,65 +1,93 @@
 package com.fongmi.android.tv.api.node;
 
+import androidx.annotation.MainThread;
+
 import com.fongmi.android.tv.App;
+import com.fongmi.android.tv.api.config.VodConfig;
+import com.fongmi.android.tv.service.PlaybackService;
+import com.fongmi.android.tv.ui.activity.HomeActivity;
 import com.fongmi.android.tv.ui.activity.WebActivity;
+import com.fongmi.android.tv.ui.custom.WebViewCookies;
 import com.fongmi.android.tv.utils.Notify;
-import com.fongmi.nodejs.NodeClient;
-import com.google.gson.JsonElement;
+import com.github.catvod.crawler.SpiderDebug;
+import com.github.catvod.runtime.NodeRuntimeApi;
+import com.github.catvod.utils.Json;
+import com.github.catvod.utils.RuntimeModule;
+import com.github.catvod.utils.Task;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import com.github.catvod.crawler.SpiderDebug;
-import com.github.catvod.utils.Json;
-import com.github.catvod.utils.Path;
 
-import java.io.File;
 import java.io.IOException;
+import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.util.Locale;
 
-public final class NodeRuntime implements NodeClient.Callback {
+public final class NodeRuntime implements NodeRuntimeApi.Callback {
 
     private static final String SUCCESS_RESPONSE = "{\"success\":true,\"code\":0}";
     private static final String FAILURE_RESPONSE = "{\"success\":false,\"code\":-1}";
 
-    private final Object profileLock = new Object();
     private final NodePlayback playback = new NodePlayback();
-    private final NodeClient client;
+    private volatile NodeRuntimeApi.Client client;
 
     private NodeRuntime() {
-        client = new NodeClient(App.get(), this);
     }
 
     public static NodeRuntime get() {
         return Loader.INSTANCE;
     }
 
-    public NodeClient client() {
+    public static boolean isConfig(String url) {
+        if (url == null || url.regionMatches(true, 0, "content://", 0, 10)) return false;
+        String value = url.split("[?#]", 2)[0];
+        try {
+            value = URLDecoder.decode(value, StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException ignored) {
+        }
+        return value.toLowerCase(Locale.ROOT).endsWith("/index.js.md5") || value.equalsIgnoreCase("index.js.md5");
+    }
+
+    public synchronized NodeRuntimeApi.Client client() {
+        if (client == null) client = RuntimeModule.NODEJS.entry(NodeRuntimeApi.class).create(App.get(), this);
         return client;
     }
 
-    public NodeClient.LoadedConfig loadConfig(String source) throws Exception {
+    public NodeRuntimeApi.LoadedConfig loadConfig(String source) throws Exception {
         playback.clear();
-        return client.loadConfig(source);
+        return client().loadConfig(source);
     }
 
     public void cancelLoad() {
-        client.cancelLoad();
+        if (client != null) client.cancelLoad();
     }
 
-    public void accept(NodeClient.LoadedConfig loaded) throws IOException {
-        client.accept(loaded);
+    public void accept(NodeRuntimeApi.LoadedConfig loaded) throws IOException {
+        client().accept(loaded);
     }
 
-    public void prune(NodeClient.LoadedConfig loaded, Iterable<String> sources, String currentSource) throws IOException {
-        client.prune(loaded, sources, currentSource);
+    public void prune(NodeRuntimeApi.LoadedConfig loaded, Iterable<String> sources, String currentSource) throws IOException {
+        if (client != null) client.prune(loaded, sources, currentSource);
     }
 
-    public void fail(NodeClient.LoadedConfig loaded) {
-        if (client.fail(loaded)) playback.clear();
+    public void fail(NodeRuntimeApi.LoadedConfig loaded) {
+        if (client != null && client.fail(loaded)) playback.clear();
     }
 
     public void clear() {
-        client.clear();
+        if (client != null) client.clear();
         playback.clear();
+    }
+
+    @MainThread
+    public void releaseIfUnused() {
+        if (HomeActivity.isRunning() || PlaybackService.isRunning()) return;
+        VodConfig.get().cancel();
+        Task.execute(this::clearIfUnused);
+    }
+
+    private synchronized void clearIfUnused() {
+        if (HomeActivity.isRunning() || PlaybackService.isRunning()) return;
+        clear();
     }
 
     @Override
@@ -75,9 +103,10 @@ public final class NodeRuntime implements NodeClient.Callback {
                 case "getPlayInfo" -> playback.getPlayInfo();
                 case "danmuPush" -> playback.pushDanmaku(Json.safeString(options, "url")) ? SUCCESS_RESPONSE : FAILURE_RESPONSE;
                 case "clearDanmu" -> playback.clearDanmaku() ? SUCCESS_RESPONSE : FAILURE_RESPONSE;
-                case "queryProfile" -> readProfile().toString();
-                case "saveProfile" -> saveProfile(options);
-                case "openInternalWebview" -> openInternalWebView(options);
+                case "openWeb", "openInternalWebview" -> WebActivity.openWeb(options.toString()) ? SUCCESS_RESPONSE : FAILURE_RESPONSE;
+                case "getCookie" -> cookie(options);
+                case "setCookie" -> WebViewCookies.set(Json.safeString(options, "url"), Json.safeString(options, "cookie")) ? SUCCESS_RESPONSE : FAILURE_RESPONSE;
+                case "getUserAgent" -> userAgent();
                 default -> FAILURE_RESPONSE;
             };
         } catch (Exception e) {
@@ -92,35 +121,16 @@ public final class NodeRuntime implements NodeClient.Callback {
         return SUCCESS_RESPONSE;
     }
 
-    private String openInternalWebView(JsonObject options) {
-        String url = NodeClient.normalizeInternalUrl(Json.safeString(options, "url"), client.getAddress());
-        return WebActivity.open(url) ? SUCCESS_RESPONSE : FAILURE_RESPONSE;
+    private String cookie(JsonObject options) {
+        JsonObject result = JsonParser.parseString(SUCCESS_RESPONSE).getAsJsonObject();
+        result.addProperty("cookie", WebViewCookies.get(Json.safeString(options, "url")));
+        return result.toString();
     }
 
-    private JsonElement readProfile() {
-        synchronized (profileLock) {
-            File file = client.getProfileFile();
-            if (file == null || !file.isFile()) return new JsonObject();
-            try {
-                return JsonParser.parseString(Path.read(file));
-            } catch (Exception e) {
-                return new JsonObject();
-            }
-        }
-    }
-
-    private String saveProfile(JsonObject profile) {
-        synchronized (profileLock) {
-            File file = client.getProfileFile();
-            if (file == null) return FAILURE_RESPONSE;
-            try {
-                Path.writeAtomically(file, profile.toString().getBytes(StandardCharsets.UTF_8));
-                return SUCCESS_RESPONSE;
-            } catch (IOException e) {
-                SpiderDebug.log(e);
-                return FAILURE_RESPONSE;
-            }
-        }
+    private String userAgent() {
+        JsonObject result = JsonParser.parseString(SUCCESS_RESPONSE).getAsJsonObject();
+        result.addProperty("ua", WebActivity.getUserAgent());
+        return result.toString();
     }
 
     private static class Loader {

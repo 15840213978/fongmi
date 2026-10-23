@@ -12,6 +12,7 @@ import android.view.ViewGroup;
 import android.webkit.CookieManager;
 import android.webkit.RenderProcessGoneDetail;
 import android.webkit.SslErrorHandler;
+import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
@@ -59,6 +60,7 @@ public final class ParseWebView extends WebView implements DialogInterface.OnDis
     private volatile String userAgent;
     private boolean destroyed;
     private boolean stopped;
+    private volatile boolean loadFailed;
     private boolean detect;
     private int pageGeneration;
     private String clickScript;
@@ -105,18 +107,26 @@ public final class ParseWebView extends WebView implements DialogInterface.OnDis
         this.url = url;
         Map<String, String> safeHeaders = headers == null ? Collections.emptyMap() : headers;
         WebViewClicker.ensureViewport(this);
+        setHeaders(safeHeaders, url);
+        loadUrl(url, safeHeaders);
+        return this;
+    }
+
+    private void setHeaders(Map<String, String> headers, String url) {
         CookieManager manager = CookieManager.getInstance();
         manager.setAcceptCookie(true);
         manager.setAcceptThirdPartyCookies(this, true);
-        for (Map.Entry<String, String> entry : safeHeaders.entrySet()) {
-            String name = entry.getKey();
-            if (HttpHeaders.USER_AGENT.equalsIgnoreCase(UrlUtil.fixHeader(name))) {
-                userAgent = entry.getValue();
-                getSettings().setUserAgentString(userAgent);
-            } else if (HttpHeaders.COOKIE.equalsIgnoreCase(name)) WebViewCookies.set(this, url, entry.getValue());
+        for (Map.Entry<String, String> entry : headers.entrySet()) applyHeader(entry, url);
+    }
+
+    private void applyHeader(Map.Entry<String, String> entry, String url) {
+        String name = entry.getKey();
+        if (HttpHeaders.USER_AGENT.equalsIgnoreCase(UrlUtil.fixHeader(name))) {
+            userAgent = entry.getValue();
+            getSettings().setUserAgentString(userAgent);
+        } else if (HttpHeaders.COOKIE.equalsIgnoreCase(name)) {
+            WebViewCookies.set(this, url, entry.getValue());
         }
-        loadUrl(url, safeHeaders);
-        return this;
     }
 
     private class Client extends WebViewClient {
@@ -129,6 +139,7 @@ public final class ParseWebView extends WebView implements DialogInterface.OnDis
 
         @Override
         public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+            if (callbackRef.get() == null || loadFailed) return super.shouldInterceptRequest(view, request);
             Uri uri = request.getUrl();
             String url = uri.toString();
             String host = uri.getHost();
@@ -137,25 +148,41 @@ public final class ParseWebView extends WebView implements DialogInterface.OnDis
             if (TextUtils.isEmpty(host) || (!cloudflare && WebViewRules.isAd(uri))) return WebViewRules.empty();
             Map<String, String> headers = request.getRequestHeaders();
             if (WebViewCloudflare.isTurnstile(uri)) App.post(ParseWebView.this::showDialog);
-            if (detect && PLAYER.matcher(url).find() && addUrl(url)) onParseAdd(headers, url);
-            else if (isVideoFormat(url)) onParseSuccess(headers, url);
+            if (detect && PLAYER.matcher(url).find() && addUrl(url)) {
+                onParseAdd(headers, url);
+            } else if (isVideoFormat(url)) {
+                App.post(() -> {
+                    if (!loadFailed) onParseSuccess(headers, url);
+                });
+            }
             return super.shouldInterceptRequest(view, request);
+        }
+
+        @Override
+        public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
+            super.onReceivedError(view, request, error);
+            if (request.isForMainFrame()) onLoadError("network", error.getErrorCode());
         }
 
         @Override
         public void onReceivedHttpError(WebView view, WebResourceRequest request, WebResourceResponse errorResponse) {
             super.onReceivedHttpError(view, request, errorResponse);
             if (WebViewCloudflare.isChallenge(errorResponse)) App.post(ParseWebView.this::showDialog);
+            else if (request.isForMainFrame()) onLoadError("HTTP", errorResponse.getStatusCode());
         }
 
         @Override
         public void onPageFinished(WebView view, String url) {
             super.onPageFinished(view, url);
-            if (BLANK.equals(url)) return;
+            if (BLANK.equals(url) || stopped || loadFailed) return;
             int generation = pageGeneration;
-            BooleanSupplier current = () -> !stopped && generation == pageGeneration;
+            BooleanSupplier current = () -> !stopped && !loadFailed && generation == pageGeneration;
             Uri uri = Uri.parse(url);
-            checkCloudflareChallenge(current, () -> WebViewRules.apply(ParseWebView.this, uri, clickScript, current));
+            evaluateJavascript(WebViewCloudflare.CHECK_SCRIPT, value -> {
+                if (!current.getAsBoolean()) return;
+                if ("true".equalsIgnoreCase(value)) showDialog();
+                else WebViewRules.apply(ParseWebView.this, uri, clickScript, current);
+            });
         }
 
         @Override
@@ -209,14 +236,6 @@ public final class ParseWebView extends WebView implements DialogInterface.OnDis
         stop(true);
     }
 
-    private void checkCloudflareChallenge(BooleanSupplier current, Runnable ready) {
-        evaluateJavascript(WebViewCloudflare.CHECK_SCRIPT, value -> {
-            if (!current.getAsBoolean()) return;
-            if ("true".equalsIgnoreCase(value)) showDialog();
-            else ready.run();
-        });
-    }
-
     private boolean isVideoFormat(String url) {
         try {
             if (!detect && url.equals(this.url)) return false;
@@ -229,23 +248,54 @@ public final class ParseWebView extends WebView implements DialogInterface.OnDis
     }
 
     private void onParseAdd(Map<String, String> headers, String url) {
-        ParseCallback cb = callbackRef.get();
-        if (cb == null) return;
-        post(() -> {
-            if (stopped || callbackRef.get() == null) return;
-            children.add(ParseWebView.create(App.get()).start(key, from, headers, url, clickScript, cb, false));
-        });
+        if (callbackRef.get() == null) return;
+        App.post(() -> startChild(headers, url));
+    }
+
+    private void startChild(Map<String, String> headers, String url) {
+        if (stopped || loadFailed || callbackRef.get() == null) return;
+        ParseWebView child = ParseWebView.create(App.get());
+        children.add(child);
+        child.start(key, from, headers, url, clickScript, new ParseCallback() {
+            @Override
+            public void onParseSuccess(Map<String, String> headers, String url, String from) {
+                ParseWebView.this.onParseSuccess(headers, url);
+            }
+
+            @Override
+            public void onParseError() {
+                children.remove(child);
+                child.release();
+                if (loadFailed && children.isEmpty()) stop(true);
+            }
+        }, false);
+    }
+
+    private void onLoadError(String kind, int code) {
+        if (stopped || loadFailed || callbackRef.get() == null) return;
+        SpiderDebug.log(TAG, "load error=%s %d", kind, code);
+        loadFailed = true;
+        stopLoading();
+        if (children.isEmpty()) stop(true);
     }
 
     private void onParseSuccess(Map<String, String> headers, String url) {
-        Uri uri = Uri.parse(url);
-        SpiderDebug.log(TAG, "success=%s://%s%s", uri.getScheme(), uri.getHost(), uri.getPath());
+        ParseCallback cb = callbackRef.getAndSet(null);
+        if (cb == null) return;
+        try {
+            Uri uri = Uri.parse(url);
+            SpiderDebug.log(TAG, "success=%s://%s%s", uri.getScheme(), uri.getHost(), uri.getPath());
+            cb.onParseSuccess(getResultHeaders(headers, url), url, from);
+        } finally {
+            stop(false);
+        }
+    }
+
+    private Map<String, String> getResultHeaders(Map<String, String> headers, String url) {
         Map<String, String> result = new LinkedHashMap<>(headers == null ? Collections.emptyMap() : headers);
         putHeader(result, HttpHeaders.COOKIE, CookieManager.getInstance().getCookie(url));
         putHeader(result, HttpHeaders.USER_AGENT, userAgent);
-        ParseCallback cb = callbackRef.getAndSet(null);
-        if (cb != null) cb.onParseSuccess(result, url, from);
-        post(() -> stop(false));
+        return result;
     }
 
     private static void putHeader(Map<String, String> headers, String name, String value) {
@@ -254,22 +304,13 @@ public final class ParseWebView extends WebView implements DialogInterface.OnDis
         headers.put(name, value);
     }
 
-    private void onParseError() {
-        ParseCallback cb = callbackRef.getAndSet(null);
-        if (cb != null) cb.onParseError();
-    }
-
-    private void releaseChildren() {
-        for (ParseWebView child : children) child.release();
-        children.clear();
-    }
-
     private void stop(boolean error) {
         stop(error, false);
     }
 
     private void stop(boolean error, boolean rendererGone) {
         if (stopped) return;
+        ParseCallback cb = callbackRef.getAndSet(null);
         stopped = true;
         hideDialog();
         if (!rendererGone) {
@@ -277,10 +318,12 @@ public final class ParseWebView extends WebView implements DialogInterface.OnDis
             loadUrl(BLANK);
         }
         App.removeCallbacks(timer);
-        releaseChildren();
-        urls.clear();
-        if (error) onParseError();
-        else callbackRef.set(null);
+        for (ParseWebView child : children) child.release();
+        children.clear();
+        synchronized (this) {
+            urls.clear();
+        }
+        if (error && cb != null) cb.onParseError();
     }
 
     public void release() {

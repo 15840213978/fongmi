@@ -40,7 +40,8 @@ public class PlaybackContentRecyclerView extends CustomRecyclerView {
         int position = getChildAdapterPosition(child);
         if (position != NO_POSITION) {
             focusedPosition = position;
-            focusedId = getAdapter() != null && getAdapter().hasStableIds() ? getAdapter().getItemId(position) : NO_ID;
+            Adapter<?> adapter = getAdapter();
+            focusedId = adapter != null && adapter.hasStableIds() ? adapter.getItemId(position) : NO_ID;
         }
         if (position != NO_POSITION && !isInTouchMode() && !isComputingLayout() && getLayoutManager() != null) {
             stopScroll();

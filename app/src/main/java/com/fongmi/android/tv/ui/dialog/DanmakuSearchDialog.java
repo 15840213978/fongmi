@@ -79,17 +79,20 @@ public final class DanmakuSearchDialog extends BaseBottomSheetDialog implements 
         binding.recycler.setItemAnimator(null);
         binding.recycler.setHasFixedSize(false);
         binding.recycler.addItemDecoration(new SpaceItemDecoration(1, 16));
-        PlaybackDialog.observe(this, player -> {
-            if (this.player != null && player == null) {
-                DanmakuApi.cancel();
-                showResults(adapter.getItemCount() == 0);
-            }
-            this.player = player;
-            if (player == null || keywordInitialized) return;
-            setKeyword(getTitle());
-            keywordInitialized = true;
-            Util.showKeyboard(binding.keyword);
-        });
+        PlaybackDialog.observe(this, this::bindPlayer);
+    }
+
+    private void bindPlayer(PlayerManager player) {
+        if (this.player != null && player == null) {
+            DanmakuApi.cancel();
+            showResults(adapter.getItemCount() == 0);
+        }
+        this.player = player;
+        if (player == null || keywordInitialized) return;
+        binding.keyword.setText(getTitle());
+        binding.keyword.setSelection(binding.keyword.length());
+        keywordInitialized = true;
+        Util.showKeyboard(binding.keyword);
     }
 
     @Override
@@ -120,12 +123,6 @@ public final class DanmakuSearchDialog extends BaseBottomSheetDialog implements 
     private String getEpisode() {
         MediaMetadata metadata = player.getMetadata();
         return metadata == null || TextUtils.isEmpty(metadata.artist) ? "" : metadata.artist.toString().trim();
-    }
-
-    private void setKeyword(CharSequence text) {
-        if (text == null) text = "";
-        binding.keyword.setText(text);
-        binding.keyword.setSelection(text.length());
     }
 
     private String getKeyword() {

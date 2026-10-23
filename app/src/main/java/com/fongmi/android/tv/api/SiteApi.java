@@ -9,7 +9,10 @@ import androidx.collection.ArrayMap;
 import com.fongmi.android.tv.App;
 import com.fongmi.android.tv.R;
 import com.fongmi.android.tv.api.config.VodConfig;
+import com.fongmi.android.tv.api.loader.SpiderTestSession;
 import com.fongmi.android.tv.bean.Class;
+import com.fongmi.android.tv.bean.Episode;
+import com.fongmi.android.tv.bean.Flag;
 import com.fongmi.android.tv.bean.Result;
 import com.fongmi.android.tv.bean.Site;
 import com.fongmi.android.tv.bean.Vod;
@@ -17,12 +20,12 @@ import com.fongmi.android.tv.player.extractor.Source;
 import com.fongmi.android.tv.player.media.LocalSubtitleScanner;
 import com.fongmi.android.tv.utils.ResUtil;
 import com.fongmi.android.tv.utils.Sniffer;
-import com.fongmi.android.tv.utils.UrlUtil;
 import com.github.catvod.crawler.Spider;
 import com.github.catvod.crawler.SpiderDebug;
 import com.github.catvod.utils.Trans;
 import com.github.catvod.net.OkHttp;
 import com.github.catvod.utils.Prefers;
+import com.github.catvod.utils.UriUtil;
 import com.github.catvod.utils.Util;
 
 import java.io.IOException;
@@ -112,10 +115,23 @@ public class SiteApi {
 
     @NonNull
     public static Result detailContent(@NonNull String key, @NonNull String id) throws Exception {
+        return detailContent(key, id, false);
+    }
+
+    @NonNull
+    public static Result detailContent(@NonNull String key, @NonNull String id, boolean builtin) throws Exception {
+        if (PUSH.equals(key) && SpiderTestSession.isPreview(id)) {
+            SpiderTestSession.previewResult(id);
+            return directDetail(id, id, ResUtil.getString(R.string.spider_test_title), R.string.push);
+        }
         SpiderDebug.log("detail", "key=%s,id=%s", key, id);
-        if (LOCAL.equals(key)) return directDetail(id, "", R.string.local);
+        if (LOCAL.equals(key)) return directDetail(id, id, "", R.string.local);
+        String originalId = id;
+        boolean push = PUSH.equals(key) && Source.isPush(id);
+        if (push) id = id.substring(7);
+        if (PUSH.equals(key) && builtin && !push) return directDetail(originalId, id, id, R.string.push);
         Site site = VodConfig.get().getSite(key);
-        if (site.isEmpty() && PUSH.equals(key)) return directDetail(id, id, R.string.push);
+        if (site.isEmpty() && PUSH.equals(key)) return directDetail(originalId, id, id, R.string.push);
         boolean spider = isSpider(site);
         String detailContent;
         if (spider) {
@@ -128,15 +144,52 @@ public class SiteApi {
         }
         SpiderDebug.log("detail", detailContent);
         Result result = spider ? Result.fromJson(detailContent) : Result.fromType(site.getType(), detailContent);
+        if (push) result.getVod().setId(originalId);
         Source.get().parse(result.getVod().setFlags());
         return result;
     }
 
     @NonNull
     public static Result playerContent(@NonNull String key, @NonNull String flag, @NonNull String id) throws Exception {
+        return playerContent(key, flag, id, false);
+    }
+
+    @NonNull
+    public static Result playerContent(@NonNull String key, @NonNull String flag, @NonNull String id, boolean builtin) throws Exception {
+        return playerContent(key, flag, id, builtin, -1);
+    }
+
+    @NonNull
+    public static Result playerContent(@NonNull String key, @NonNull String flag, @NonNull String id, boolean builtin, int qualityPosition) throws Exception {
         SpiderDebug.log("player", "key=%s,flag=%s,id=%s", key, flag, id);
         Source.get().stop();
-        if (LOCAL.equals(key)) return directPlayer(key, flag, id);
+        Result result = loadPlayerContent(key, flag, id, builtin);
+        if (qualityPosition >= 0 && !result.getUrl().getValues().isEmpty()) result.getUrl().set(qualityPosition);
+        result.setUrl(Source.get().fetch(result));
+        SpiderDebug.log("player", result.toString());
+        return result;
+    }
+
+    @NonNull
+    public static Result preloadContent(@NonNull String key, @NonNull String flag, @NonNull String id) throws Exception {
+        return preloadContent(key, flag, id, false);
+    }
+
+    @NonNull
+    public static Result preloadContent(@NonNull String key, @NonNull String flag, @NonNull String id, boolean builtin) throws Exception {
+        SpiderDebug.log("preload", "key=%s,flag=%s,id=%s", key, flag, id);
+        return loadPlayerContent(key, flag, id, builtin);
+    }
+
+    @NonNull
+    private static Result loadPlayerContent(@NonNull String key, @NonNull String flag, @NonNull String id, boolean builtin) throws Exception {
+        if (PUSH.equals(key) && SpiderTestSession.isPreview(id)) {
+            Result result = Result.fromJson(SpiderTestSession.previewResult(id));
+            result.setKey(key);
+            if (result.getFlag().isEmpty()) result.setFlag(flag);
+            return result;
+        }
+        if (LOCAL.equals(key) || PUSH.equals(key) && builtin) return directPlayer(key, flag, id);
         Site site = VodConfig.get().getSite(key);
         if (site.getType() == 3 || site.getType() == 4) {
             String playerContent;
@@ -151,7 +204,6 @@ public class SiteApi {
             SpiderDebug.log("player", playerContent);
             Result result = Result.fromJson(playerContent);
             if (result.getFlag().isEmpty()) result.setFlag(flag);
-            result.setUrl(Source.get().fetch(result));
             result.setHeader(site.getHeader());
             result.setKey(key);
             return result;
@@ -164,20 +216,43 @@ public class SiteApi {
         result.setHeader(site.getHeader());
         result.setPlayUrl(site.getPlayUrl());
         result.setParse(Sniffer.isVideoFormat(id) && result.getPlayUrl().isEmpty() ? 0 : 1);
-        result.setUrl(Source.get().fetch(result));
-        SpiderDebug.log("player", result.toString());
         return result;
     }
 
-    private static Result directDetail(String id, String name, @StringRes int source) throws Exception {
+    private static Result directDetail(String id, String target, String name, @StringRes int source) throws Exception {
         Vod vod = new Vod();
         vod.setId(id);
         vod.setName(name);
-        vod.setPlayUrl(id);
-        vod.setPlayFrom(ResUtil.getString(source));
         vod.setPic(ResUtil.getString(R.string.push_image));
-        Source.get().parse(vod.setFlags());
+        Flag flag = Flag.create(ResUtil.getString(source));
+        String[] lines = source == R.string.push ? target.split("\\R") : new String[]{target};
+        for (String line : lines) addDirectEpisode(flag, line, source);
+        vod.getFlags().add(flag);
+        Source.get().parse(vod);
         return Result.vod(vod);
+    }
+
+    private static void addDirectEpisode(Flag flag, String line, @StringRes int source) {
+        String url = line.trim();
+        if (url.isEmpty()) return;
+        String number = String.format(Locale.getDefault(), "%02d", flag.getEpisodes().size() + 1);
+        int delimiter = url.indexOf('$');
+        if (source == R.string.push && isNamedLine(url)) {
+            String title = url.substring(0, delimiter).trim();
+            flag.getEpisodes().add(Episode.create(title.isEmpty() ? number : title, url.substring(delimiter + 1).trim()));
+        } else {
+            flag.getEpisodes().add(Episode.create(number, url));
+        }
+    }
+
+    private static boolean isNamedLine(String url) {
+        int delimiter = url.indexOf('$');
+        if (delimiter < 0) return false;
+        int colon = url.indexOf(':');
+        if (delimiter < colon) return true;
+        if (colon >= 0 && url.startsWith("?", colon + 1)) return false;
+        int scheme = url.indexOf("://");
+        return scheme >= 0 ? delimiter < scheme : Sniffer.AI_PUSH.matcher(url.substring(delimiter + 1).trim()).lookingAt();
     }
 
     private static Result directPlayer(String key, String flag, String id) throws Exception {
@@ -187,13 +262,11 @@ public class SiteApi {
         result.setFlag(flag);
         result.setParse(PUSH.equals(key) && isWebPage(id) ? 1 : 0);
         if (LOCAL.equals(key)) result.setSubs(LocalSubtitleScanner.scan(id));
-        result.setUrl(Source.get().fetch(result));
-        SpiderDebug.log("player", result.toString());
         return result;
     }
 
     static boolean isWebPage(String url) {
-        String path = UrlUtil.stripQueryAndFragment(url).toLowerCase(Locale.ROOT);
+        String path = UriUtil.stripQueryAndFragment(url).toLowerCase(Locale.ROOT);
         return path.endsWith(".htm") || path.endsWith(".html") || path.endsWith(".shtm") || path.endsWith(".shtml");
     }
 

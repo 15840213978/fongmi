@@ -26,6 +26,33 @@ public final class NodeSpider extends Spider {
         this.api = api;
     }
 
+    static String addMissingActions(String result) {
+        try {
+            JsonObject root = JsonParser.parseString(result).getAsJsonObject();
+            JsonArray list = root.getAsJsonArray("list");
+            if (list == null) return result;
+            boolean changed = addListActions(list);
+            return changed ? GSON.toJson(root) : result;
+        } catch (RuntimeException e) {
+            return result;
+        }
+    }
+
+    private static boolean addListActions(JsonArray list) {
+        boolean changed = false;
+        for (JsonElement element : list) changed |= addListAction(element);
+        return changed;
+    }
+
+    private static boolean addListAction(JsonElement element) {
+        if (!element.isJsonObject()) return false;
+        JsonObject item = element.getAsJsonObject();
+        JsonElement id = item.get("vod_id");
+        if (id == null || !id.isJsonPrimitive() || id.getAsString().isEmpty() || item.has("action")) return false;
+        item.addProperty("action", id.getAsString());
+        return true;
+    }
+
     @Override
     public void init(Context context, String extend) throws Exception {
         JsonObject body = new JsonObject();
@@ -127,8 +154,13 @@ public final class NodeSpider extends Spider {
         JsonObject body = new JsonObject();
         body.addProperty("action", action);
         String result = client.postOrNull(NodeRoute.append(api, "/action"), body);
-        if (result != null) return result;
-        return isLegacyConfigSpider() ? detail(action) : "";
+        if (result == null) result = isLegacyConfigSpider() ? detail(action) : "";
+        if (result.isEmpty()) return result;
+        JsonObject response = JsonParser.parseString(result).getAsJsonObject();
+        JsonElement web = response.get("web");
+        if (web == null || !web.isJsonObject()) return result;
+        response.add("web", client.normalizeWeb(web.getAsJsonObject()));
+        return response.toString();
     }
 
     private String addLegacyConfigActions(String result) {
@@ -138,26 +170,6 @@ public final class NodeSpider extends Spider {
     private boolean isLegacyConfigSpider() {
         String route = NodeRoute.path(api);
         return route.equals(LEGACY_CONFIG_ROUTE) || route.startsWith(LEGACY_CONFIG_ROUTE + "?");
-    }
-
-    static String addMissingActions(String result) {
-        try {
-            JsonObject root = JsonParser.parseString(result).getAsJsonObject();
-            JsonArray list = root.getAsJsonArray("list");
-            if (list == null) return result;
-            boolean changed = false;
-            for (JsonElement element : list) {
-                if (!element.isJsonObject()) continue;
-                JsonObject item = element.getAsJsonObject();
-                JsonElement id = item.get("vod_id");
-                if (id == null || !id.isJsonPrimitive() || id.getAsString().isEmpty() || item.has("action")) continue;
-                item.addProperty("action", id.getAsString());
-                changed = true;
-            }
-            return changed ? GSON.toJson(root) : result;
-        } catch (RuntimeException e) {
-            return result;
-        }
     }
 
     private String detail(String id) throws Exception {

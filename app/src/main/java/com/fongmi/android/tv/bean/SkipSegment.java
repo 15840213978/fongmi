@@ -2,7 +2,6 @@ package com.fongmi.android.tv.bean;
 
 import com.google.gson.annotations.SerializedName;
 
-/** A playerContent skip range in milliseconds; only an ending range may omit end. */
 public class SkipSegment {
 
     @SerializedName("type")

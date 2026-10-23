@@ -6,6 +6,8 @@ import androidx.media3.common.Player;
 
 import com.github.catvod.crawler.SpiderDebug;
 
+import java.util.Objects;
+
 public record PlaybackSnapshot(boolean released, String url, String key, MediaMetadata metadata, MediaMetadata playingMetadata,
                                long position, long duration, float speed, int state) {
 
@@ -15,8 +17,8 @@ public record PlaybackSnapshot(boolean released, String url, String key, MediaMe
 
     public static PlaybackSnapshot pending(PlayerManager player) {
         if (player == null) return empty();
-        String url = text(player.getUrl());
-        String key = text(player.getKey());
+        String url = Objects.toString(player.getUrl(), "");
+        String key = Objects.toString(player.getKey(), "");
         MediaMetadata metadata = player.getMetadata();
         if (metadata == null) metadata = MediaMetadata.EMPTY;
         return new PlaybackSnapshot(true, url, key, metadata, MediaMetadata.EMPTY, 0, 0, 1, 1);
@@ -45,9 +47,5 @@ public record PlaybackSnapshot(boolean released, String url, String key, MediaMe
         if (state == Player.STATE_BUFFERING) return 6;
         if (state == Player.STATE_READY) return 2;
         return 1;
-    }
-
-    private static String text(String value) {
-        return value == null ? "" : value;
     }
 }

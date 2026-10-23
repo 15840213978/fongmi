@@ -1,83 +1,101 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.appcompat.widget.LinearLayoutCompat xmlns:android="http://schemas.android.com/apk/res/android"
+<com.fongmi.android.tv.ui.custom.CustomTabLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="wrap_content"
+    android:layout_height="match_parent"
     android:orientation="vertical">
 
-    <com.google.android.material.textview.MaterialTextView
-        android:id="@+id/title"
+    <androidx.appcompat.widget.LinearLayoutCompat
+        style="@style/PlaybackDialogHeader"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:paddingHorizontal="24dp"
-        android:paddingTop="24dp"
-        android:paddingBottom="16dp"
-        android:textColor="@color/white"
-        android:textSize="16sp" />
+        android:gravity="center_vertical"
+        android:minHeight="72dp"
+        android:orientation="horizontal">
 
-    <HorizontalScrollView
+        <com.google.android.material.textview.MaterialTextView
+            style="@style/PlaybackDialogTitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/decoder_setting" />
+
+    </androidx.appcompat.widget.LinearLayoutCompat>
+
+    <com.google.android.material.button.MaterialButtonToggleGroup
+        android:id="@+id/tabGroup"
+        style="@style/PlaybackDialogTabs"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
+        android:layout_height="wrap_content">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/tabVideo"
+            style="@style/PlaybackDialogTab"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:nextFocusDown="@id/auto"
+            android:text="@string/decoder_tab_video" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/tabAudio"
+            style="@style/PlaybackDialogTab"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/decoder_tab_audio" />
+
+    </com.google.android.material.button.MaterialButtonToggleGroup>
+
+    <androidx.core.widget.NestedScrollView
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:clipToPadding="false"
+        android:fillViewport="true"
         android:overScrollMode="never"
-        android:scrollbars="none">
+        android:paddingHorizontal="@dimen/playback_dialog_inset"
+        android:paddingTop="@dimen/playback_dialog_spacing">
 
         <androidx.appcompat.widget.LinearLayoutCompat
-            android:id="@+id/modes"
-            android:layout_width="wrap_content"
+            style="@style/PlaybackDialogBody"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:paddingStart="24dp"
-            android:paddingEnd="24dp"
-            android:paddingBottom="24dp">
+            android:orientation="vertical">
 
-            <com.google.android.material.textview.MaterialTextView
+            <include
                 android:id="@+id/auto"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginEnd="8dp"
-                android:background="@drawable/selector_chip_round"
-                android:focusable="true"
-                android:focusableInTouchMode="true"
-                android:text="@string/decoder_mode_auto"
-                android:textColor="@color/text"
-                android:textSize="14sp" />
+                layout="@layout/view_decoder_mode_row"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content" />
 
-            <com.google.android.material.textview.MaterialTextView
+            <include
                 android:id="@+id/hardware"
-                android:layout_width="wrap_content"
+                layout="@layout/view_decoder_mode_row"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginEnd="8dp"
-                android:background="@drawable/selector_chip_round"
-                android:focusable="true"
-                android:focusableInTouchMode="true"
-                android:text="@string/decoder_mode_hardware"
-                android:textColor="@color/text"
-                android:textSize="14sp" />
+                android:layout_marginTop="16dp" />
 
-            <com.google.android.material.textview.MaterialTextView
+            <include
                 android:id="@+id/software"
-                android:layout_width="wrap_content"
+                layout="@layout/view_decoder_mode_row"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginEnd="8dp"
-                android:background="@drawable/selector_chip_round"
-                android:focusable="true"
-                android:focusableInTouchMode="true"
-                android:text="@string/decoder_mode_software"
-                android:textColor="@color/text"
-                android:textSize="14sp" />
+                android:layout_marginTop="16dp" />
+
+            <include
+                android:id="@+id/ffmpeg"
+                layout="@layout/view_decoder_mode_row"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp" />
 
             <com.google.android.material.textview.MaterialTextView
-                android:id="@+id/ffmpeg"
-                android:layout_width="wrap_content"
+                android:id="@+id/unavailable"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:background="@drawable/selector_chip_round"
-                android:focusable="true"
-                android:focusableInTouchMode="true"
-                android:text="@string/decoder_mode_ffmpeg"
-                android:textColor="@color/text"
-                android:textSize="14sp" />
+                android:paddingVertical="16dp"
+                android:text="@string/decoder_mode_unavailable"
+                android:textAppearance="?attr/textAppearanceBodyMedium"
+                android:visibility="gone" />
 
         </androidx.appcompat.widget.LinearLayoutCompat>
-
-    </HorizontalScrollView>
-
-</androidx.appcompat.widget.LinearLayoutCompat>
+    </androidx.core.widget.NestedScrollView>
+</com.fongmi.android.tv.ui.custom.CustomTabLayout>

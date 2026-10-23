@@ -13,20 +13,14 @@ public final class LiveInput extends BaseInput<LiveInput.Listener> {
 
     private final StringBuilder channelNumber;
 
-    private final Runnable findChannel = new Runnable() {
-        @Override
-        public void run() {
-            listener.onFind(channelNumber.toString());
-            channelNumber.setLength(0);
-        }
-    };
+    private final Runnable findChannel = this::findChannel;
 
     public static LiveInput create(Context context, Listener listener) {
         return new LiveInput(context, listener);
     }
 
     private LiveInput(Context context, Listener listener) {
-        super(context, listener, false);
+        super(context, listener);
         this.channelNumber = new StringBuilder();
     }
 
@@ -67,6 +61,11 @@ public final class LiveInput extends BaseInput<LiveInput.Listener> {
         channelNumber.append(getNumber(keyCode));
         listener.onShow(channelNumber.toString());
         App.post(findChannel, CHANNEL_NUMBER_TIMEOUT_MS);
+    }
+
+    private void findChannel() {
+        listener.onFind(channelNumber.toString());
+        channelNumber.setLength(0);
     }
 
     private int getNumber(int keyCode) {

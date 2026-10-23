@@ -46,13 +46,15 @@ public class ChannelAdapter extends RecyclerView.Adapter<ChannelAdapter.ViewHold
     }
 
     public void setSelected(Channel selected) {
-        for (int i = 0; i < mItems.size(); i++) {
-            Channel item = mItems.get(i);
-            boolean next = selected.equals(item);
-            if (item.isSelected() == next) continue;
-            item.setSelected(next);
-            notifyItemChanged(i, Boolean.TRUE);
-        }
+        for (int i = 0; i < mItems.size(); i++) updateSelection(i, selected);
+    }
+
+    private void updateSelection(int position, Channel selected) {
+        Channel item = mItems.get(position);
+        boolean shouldSelect = selected.equals(item);
+        if (item.isSelected() == shouldSelect) return;
+        item.setSelected(shouldSelect);
+        notifyItemChanged(position, Boolean.TRUE);
     }
 
     @Override

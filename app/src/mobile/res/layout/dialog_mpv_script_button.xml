@@ -134,7 +134,7 @@
                         android:id="@+id/command"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:imeOptions="actionDone|flagNoFullscreen"
+                        android:imeOptions="actionDone"
                         android:importantForAutofill="no"
                         android:inputType="textNoSuggestions"
                         android:nextFocusUp="@id/title"

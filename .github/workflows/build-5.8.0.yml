@@ -35,7 +35,6 @@ jobs:
               --output "$RUNNER_TEMP/fongmi-official/$filename"
           done
 
-      # 临时补丁：脚本内硬编码 5.6.6 的 SHA256，换成 5.8.1 后必然不匹配
       - name: Patch SHA256 check for 5.8.1 (temporary)
         shell: bash
         run: |
@@ -96,7 +95,6 @@ jobs:
           (cd "$work" && zip -r "$OLDPWD/app/libs/lib-mpvplayer-release.aar" AndroidManifest.xml classes.jar)
           ls -la app/libs/lib-mpvplayer-release.aar
 
-      # 从 GitHub 内部仓库下载，避免 Gitee 访问超时
       - name: Download lib-decoder-ffmpeg-release.aar (from GitHub)
         shell: bash
         run: |
@@ -109,10 +107,9 @@ jobs:
           echo "下载 lib-decoder-ffmpeg-release.aar ..."
           curl -L --fail --retry 3 --retry-all-errors \
             --connect-timeout 20 --max-time 300 \
-            "https://raw.githubusercontent.com/NuvioMedia/NuvioTV/dev/ffmpeg-decoder-downmix/app/libs/lib-decoder-ffmpeg-release.aar" \
+            "https://raw.githubusercontent.com/NuvioMedia/NuvioTV/dev/app/libs/lib-decoder-ffmpeg-release.aar" \
             --output app/libs/lib-decoder-ffmpeg-release.aar || {
             echo "::error::从 NuvioTV 下载失败，该路径可能不存在。"
-            echo "请打开 https://github.com/NuvioMedia/NuvioTV 确认文件的实际路径。"
             exit 1
           }
           size=$(stat -c%s "app/libs/lib-decoder-ffmpeg-release.aar")

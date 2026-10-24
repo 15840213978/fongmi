@@ -96,7 +96,8 @@ jobs:
           (cd "$work" && zip -r "$OLDPWD/app/libs/lib-mpvplayer-release.aar" AndroidManifest.xml classes.jar)
           ls -la app/libs/lib-mpvplayer-release.aar
 
-      - name: Download lib-decoder-ffmpeg-release.aar
+      # 从 GitHub 内部仓库下载，避免 Gitee 访问超时
+      - name: Download lib-decoder-ffmpeg-release.aar (from GitHub)
         shell: bash
         run: |
           set -euo pipefail
@@ -108,8 +109,12 @@ jobs:
           echo "下载 lib-decoder-ffmpeg-release.aar ..."
           curl -L --fail --retry 3 --retry-all-errors \
             --connect-timeout 20 --max-time 300 \
-            "https://gitee.com/mzhsy/MzDKPlayer/raw/main/app/libs/lib-decoder-ffmpeg-release.aar" \
-            --output app/libs/lib-decoder-ffmpeg-release.aar
+            "https://raw.githubusercontent.com/NuvioMedia/NuvioTV/dev/ffmpeg-decoder-downmix/app/libs/lib-decoder-ffmpeg-release.aar" \
+            --output app/libs/lib-decoder-ffmpeg-release.aar || {
+            echo "::error::从 NuvioTV 下载失败，该路径可能不存在。"
+            echo "请打开 https://github.com/NuvioMedia/NuvioTV 确认文件的实际路径。"
+            exit 1
+          }
           size=$(stat -c%s "app/libs/lib-decoder-ffmpeg-release.aar")
           if [ "$size" -lt 1000000 ]; then
             echo "::error::下载的文件过小（$size bytes），可能不是有效的 AAR。"
